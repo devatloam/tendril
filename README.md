@@ -43,8 +43,9 @@ made by Loam alongside [Blight](https://github.com/bluejutzu/blight).
 - **Your icons, in their colours.** Apps, files and sites keep their own icons; Tendril draws only its own commands.
 - **The keyboard all the way.** Ctrl K lists what you can do with anything; quick keys open the first nine rows.
 - **Made to look at.** See-through with blur, eight palettes from Blight, Flat or Modern, compact or with details.
-- **A Settings window**, in Windows 11's own design on Windows (its colours, your accent, Segoe UI), and the same
-  settings in the launcher itself for when your hands are on the keys.
+- **At home on Windows.** There, the launcher and Settings follow Windows 11's own design: its greys, the accent you
+  picked, Segoe UI, and lists and controls drawn as Windows draws them.
+- **A Settings window**, and the same settings in the launcher itself for when your hands are on the keys.
 - **Keeps itself up to date**, checked against the release's checksum, with nightly previews if you want them early.
 
 ## Installing

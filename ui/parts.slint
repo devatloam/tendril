@@ -50,10 +50,11 @@ export component Keycap inherits Rectangle {
     in property <bool> big;
     height: big ? 30px : 20px;
     min-width: big ? 30px : 20px;
-    border-radius: big ? 7px : 5px;
-    background: Theme.ink.with-alpha(strong ? 0.14 : 0.09);
-    border-width: big ? 1px : 0;
-    border-color: Theme.ink.with-alpha(0.12);
+    // Windows: its control look, a faint fill with a hairline edge.
+    border-radius: Theme.fluent ? 4px : big ? 7px : 5px;
+    background: Theme.ink.with-alpha(Theme.fluent ? (strong ? 0.1 : 0.06) : strong ? 0.14 : 0.09);
+    border-width: big || Theme.fluent ? 1px : 0;
+    border-color: Theme.ink.with-alpha(Theme.fluent ? 0.08 : 0.12);
     HorizontalLayout {
         padding-left: big ? 10px : 5px;
         padding-right: big ? 10px : 5px;
@@ -87,7 +88,8 @@ export component RowIcon inherits Rectangle {
     width: size;
     height: size;
     border-radius: tint == 0 ? 0 : size * 0.3;
-    background: tint == 0 ? transparent
+    // Windows' lists show glyphs on their own, without a square behind.
+    background: tint == 0 || Theme.fluent ? transparent
         : Theme.modern ? @linear-gradient(180deg, c.with-alpha(wash * 1.2) 0%, c.with-alpha(wash * 0.7) 100%)
         : c.with-alpha(wash);
     animate background {
@@ -95,12 +97,12 @@ export component RowIcon inherits Rectangle {
         easing: cubic-bezier(0.2, 0, 0, 1);
     }
     Image {
-        width: tint == 0 ? parent.width : parent.width * 0.68;
+        width: tint == 0 ? parent.width : parent.width * (Theme.fluent ? 0.8 : 0.68);
         height: self.width;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         source: source;
-        colorize: tint == 0 ? transparent : lit ? #ffffff : plain ? Theme.ink.with-alpha(on ? 0.95 : 0.8) : c;
+        colorize: tint == 0 ? transparent : lit && !Theme.fluent ? #ffffff : plain ? Theme.ink.with-alpha(on || Theme.fluent ? 0.95 : 0.8) : c;
         image-fit: contain;
     }
 }
@@ -334,7 +336,7 @@ export component DetailPane inherits Rectangle {
 export component CalcRow inherits Rectangle {
     in property <Row> data;
     in property <bool> selected;
-    border-radius: 10px;
+    border-radius: Theme.fluent ? 6px : 10px;
     border-width: 1px;
     border-color: selected ? transparent : Theme.line;
     HorizontalLayout {
@@ -412,7 +414,8 @@ export component ActionPanel inherits Rectangle {
     property <length> row-height: 34px;
     width: 320px;
     height: min(actions.length, 8) * row-height + 12px + 28px + 45px;
-    border-radius: 12px;
+    // Windows' flyouts and dialogs round at 8px.
+    border-radius: Theme.fluent ? 8px : 12px;
     background: Theme.panel;
     border-width: 1px;
     border-color: Theme.line;
@@ -553,7 +556,7 @@ export component ConfirmDialog inherits Rectangle {
     card := Rectangle {
         width: 340px;
         height: layout.preferred-height;
-        border-radius: 14px;
+        border-radius: Theme.fluent ? 8px : 14px;
         background: Theme.panel;
         border-width: 1px;
         border-color: Theme.line;

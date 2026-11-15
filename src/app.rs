@@ -252,6 +252,9 @@ impl App {
         };
         let palette = palettes::find(key).unwrap_or(&palettes::PALETTES[0]);
         palettes::apply(&ui.global::<Theme>(), palette);
+        if crate::fluent::on() {
+            crate::fluent::apply(&ui.global::<Theme>());
+        }
     }
 
     /// The window's look, from [appearance] in config.toml.

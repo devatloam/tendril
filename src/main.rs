@@ -10,6 +10,7 @@ mod calc;
 mod catalog;
 mod clipboard;
 mod config;
+mod fluent;
 mod hotkey;
 mod icons;
 mod ipc;

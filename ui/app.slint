@@ -14,9 +14,11 @@ export { SettingsWindow, Choice, ChoiceGroup, Entry, Look } from "settings.slint
 component Highlight inherits Rectangle {
     // Flat: a plain wash, as Raycast does it (the CPU renderer only rounds flat fills).
     // Modern: lit from above, with a faint sheen along the top edge.
+    // Windows: a faint wash with a pill of the accent at the left, as Windows' own lists.
+    in property <bool> is-row;
     property <color> c: Theme.selection;
     property <float> a: Theme.selection-alpha;
-    border-radius: 10px;
+    border-radius: Theme.fluent ? (is-row ? 4px : 6px) : 10px;
     background: Theme.modern ? @linear-gradient(180deg, c.with-alpha(a * 1.3) 0%, c.with-alpha(a * 0.75) 100%) : c.with-alpha(a);
     if Theme.modern: Rectangle {
         x: 10px;
@@ -24,6 +26,14 @@ component Highlight inherits Rectangle {
         width: parent.width - 20px;
         height: 1px;
         background: #ffffff.with-alpha(Theme.dark ? 0.06 : 0.4);
+    }
+    if Theme.fluent && root.is-row: Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: 3px;
+        height: min(16px, parent.height - 12px);
+        border-radius: 1.5px;
+        background: Theme.highlight;
     }
 }
 
@@ -35,7 +45,8 @@ export component Launcher inherits Window {
     no-frame: frameless;
     always-on-top: true;
     background: see-through ? transparent : Theme.panel;
-    default-font-family: "Geist";
+    // Segoe UI Variable on Windows 11; Windows 10 falls back to Segoe UI.
+    default-font-family: Theme.fluent ? "Segoe UI Variable Text" : "Geist";
     default-font-size: 14px;
     forward-focus: search;
 
@@ -398,6 +409,7 @@ export component Launcher inherits Window {
                                 y: root.rows[root.selected].y;
                                 width: root.rows[root.selected].width > 0 ? root.rows[root.selected].width : list.width;
                                 height: root.rows[root.selected].height;
+                                is-row: root.rows[root.selected].kind != 4;
                                 animate x, y {
                                     duration: root.glide ? 110ms : 0ms;
                                     easing: cubic-bezier(0.2, 0, 0, 1);

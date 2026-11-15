@@ -1041,8 +1041,16 @@ impl App {
                     items.push(None);
                     y += 150.0;
                 }
-                Line::Favourites(favourites) if a.grid() => {
+                Line::Favourites(mut favourites) if a.grid() => {
                     groups += 1;
+                    // Whole rows of tiles only: a last tile alone on its row looks like a mistake.
+                    // What you pinned stays, whatever that leaves.
+                    if favourites.len() > columns {
+                        let usage = self.usage.borrow();
+                        while favourites.len() % columns != 0 && favourites.last().is_some_and(|i| !usage.is_pinned(&i.id)) {
+                            favourites.pop();
+                        }
+                    }
                     if headings {
                         rows.push(Row { kind: 0, y, height: 30.0, title: "Favourites".into(), ..Default::default() });
                         items.push(None);

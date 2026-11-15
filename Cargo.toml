@@ -66,6 +66,11 @@ window-vibrancy = "0.8"
 plist = "1.10"
 icns = "0.5"
 
+# Slint's CPU renderer with hinted text snapped to whole pixels; stock, text is soft at
+# fractional scaling (125% on Windows). Keep its version in step with slint's.
+[patch.crates-io]
+i-slint-renderer-software = { path = "vendor/i-slint-renderer-software" }
+
 [build-dependencies]
 slint-build = "1.18.1"
 

@@ -691,12 +691,12 @@ export component Launcher inherits Window {
                                     VerticalLayout {
                                         alignment: center;
                                         Rectangle {
-                                            width: 20px;
+                                            width: Theme.fluent ? 40px : 20px;
                                             height: 20px;
-                                            border-radius: 5px;
+                                            border-radius: Theme.fluent ? 4px : 5px;
                                             background: Theme.panel.with-alpha(0.14);
                                             Text {
-                                                text: "↵";
+                                                text: Theme.fluent ? "Enter" : "↵";
                                                 color: Theme.panel;
                                                 font-size: 11px;
                                             }

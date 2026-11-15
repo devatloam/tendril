@@ -26,10 +26,13 @@ pub fn with_app(f: impl FnOnce(&Rc<App>)) {
     }
 }
 
-/// How long the window keeps what you typed while it's away, as Raycast does.
-const KEEP_QUERY: Duration = Duration::from_secs(90);
+/// How long the window stays on the view you left it on (Clipboard History, Appearance…).
+/// What you typed is cleared on closing.
+const KEEP_VIEW: Duration = Duration::from_secs(90);
 /// Apps are looked for again on opening, at most this often.
 const RESCAN_AFTER: Duration = Duration::from_secs(120);
+/// Files are looked through again on opening, at most this often.
+const REINDEX_AFTER: Duration = Duration::from_secs(20 * 60);
 /// The least time the "looking for apps" shapes stay up.
 const MIN_BUSY: Duration = Duration::from_millis(900);
 
@@ -94,6 +97,14 @@ pub struct App {
     toast_timer: Timer,
     scanned_at: Cell<Option<Instant>>,
     scanning: Cell<bool>,
+    /// Files found by name, from the last walk of the [files] folders.
+    files: RefCell<crate::files::Index>,
+    /// The [files] rules the last walk used, and when it started: a change to them, or enough
+    /// time, means walking again.
+    indexed_with: RefCell<Option<config::Files>>,
+    indexed_at: Cell<Option<Instant>>,
+    /// Say how many were found when the walk ends (Index Files was run).
+    tell_indexed: Cell<bool>,
     update: RefCell<UpdateState>,
     /// With previews on "ask": the newest preview, offered below any update.
     preview_offer: RefCell<Option<update::Release>>,
@@ -173,6 +184,10 @@ impl App {
             toast_timer: Timer::default(),
             scanned_at: Cell::new(None),
             scanning: Cell::new(false),
+            files: RefCell::default(),
+            indexed_with: RefCell::new(None),
+            indexed_at: Cell::new(None),
+            tell_indexed: Cell::new(false),
             update: RefCell::new(UpdateState::Quiet),
             preview_offer: RefCell::new(None),
             updating: Cell::new(false),
@@ -207,6 +222,11 @@ impl App {
         ui.on_hover(|i, x, y| with_app(|a| a.hover(i, x, y)));
         ui.on_activate(|i, alt| with_app(|a| a.activate(i, alt)));
         ui.on_escape(|| with_app(|a| a.escape()));
+        ui.on_back(|| {
+            let mut left = false;
+            with_app(|a| left = a.back());
+            left
+        });
         ui.on_toggle_actions(|| with_app(|a| a.toggle_actions()));
         ui.on_action_query_edited(|q| with_app(|a| a.filter_actions(&q)));
         ui.on_action_move(|d| with_app(|a| a.move_action(d)));
@@ -376,9 +396,8 @@ impl App {
         self.apply_appearance();
         self.icons.borrow_mut().set_scale(ui.window().scale_factor());
         self.pointer.set(None);
-        let stale = self.hidden_at.get().is_none_or(|t| t.elapsed() > KEEP_QUERY);
+        let stale = self.hidden_at.get().is_none_or(|t| t.elapsed() > KEEP_VIEW);
         if stale {
-            ui.set_query(SharedString::new());
             self.view.set(View::Root);
             self.set_context(&ui);
         }
@@ -388,6 +407,11 @@ impl App {
         }
         if self.scanned_at.get().is_none_or(|t| t.elapsed() > RESCAN_AFTER) {
             self.rescan(false);
+        }
+        if self.indexed_with.borrow().as_ref() != Some(&self.config.borrow().files)
+            || self.indexed_at.get().is_none_or(|t| t.elapsed() > REINDEX_AFTER)
+        {
+            self.index_files(false);
         }
         self.close_overlays(&ui);
         if !self.config.borrow().onboarded && self.onboarding.get().is_none() {
@@ -542,6 +566,7 @@ impl App {
             ui.set_recording(false);
             self.close_overlays(&ui);
             ui.set_toast(SharedString::new());
+            ui.set_query(SharedString::new());
         }
         self.hidden_at.set(Some(Instant::now()));
         if self.usage_changed.replace(false) {
@@ -647,6 +672,10 @@ impl App {
     /// icon (sites.rs), and searches and links the default browser's.
     fn decorate(&self, item: &mut Item) {
         use crate::catalog::Icon;
+        if matches!(item.run, Run::IndexFiles) {
+            item.subtitle = crate::files::status();
+            return;
+        }
         if !matches!(item.kind, Kind::Link | Kind::Fallback) || !matches!(item.icon, Icon::Builtin(_)) {
             return;
         }
@@ -666,11 +695,71 @@ impl App {
         }
     }
 
+    /// Walks the [files] folders again on a background thread, or forgets them if file search is off.
+    pub fn index_files(&self, tell: bool) {
+        if crate::files::walking() {
+            // Rules changed meanwhile are picked up on a later open, once this walk is done.
+            if tell {
+                self.toast("Already looking through your files", false);
+            }
+            return;
+        }
+        let files = self.config.borrow().files.clone();
+        *self.indexed_with.borrow_mut() = Some(files.clone());
+        if !files.index {
+            crate::files::set_off();
+            *self.files.borrow_mut() = crate::files::Index::default();
+            if tell {
+                self.toast("File search is off. Appearance can turn it on.", false);
+            }
+            return;
+        }
+        self.indexed_at.set(Some(Instant::now()));
+        self.tell_indexed.set(self.tell_indexed.get() || tell);
+        crate::files::start(files, || with_app(|a| a.files_progress()), |index| with_app(|a| a.files_indexed(index)));
+        self.set_busy(true);
+    }
+
+    /// A few times a second while the walk runs: the count, where it's shown.
+    fn files_progress(&self) {
+        self.set_busy(true);
+        crate::settings::show_files_status();
+        let showing = self.items.borrow().iter().flatten().any(|i| matches!(i.run, Run::IndexFiles | Run::Setting("index")));
+        if showing && let Some(ui) = self.ui.upgrade() {
+            let keep = self.selected_item().map(|i| i.id);
+            self.refresh_keeping(&ui.get_query(), keep.as_deref());
+        }
+    }
+
+    fn files_indexed(&self, index: crate::files::Index) {
+        let count = index.len();
+        *self.files.borrow_mut() = index;
+        self.set_busy(false);
+        // The rules changed while it walked (in Settings, say): walk again with the new ones.
+        if self.indexed_with.borrow().as_ref() != Some(&self.config.borrow().files) {
+            self.index_files(false);
+        }
+        crate::settings::refresh();
+        if let Some(ui) = self.ui.upgrade() {
+            let keep = self.selected_item().map(|i| i.id);
+            self.refresh_keeping(&ui.get_query(), keep.as_deref());
+        }
+        if self.tell_indexed.replace(false) {
+            self.toast(&format!("Found {} files and folders", crate::files::thousands(count)), false);
+        }
+    }
+
     fn set_busy(&self, _: bool) {
         if let Some(ui) = self.ui.upgrade() {
-            let label = if self.updating.get() { "Updating Tendril…" } else { "Looking for apps…" };
+            let label = if self.updating.get() {
+                "Updating Tendril…".to_string()
+            } else if self.scanning.get() {
+                "Looking for apps…".to_string()
+            } else {
+                format!("Indexing files… {}", crate::files::thousands(crate::files::found_so_far()))
+            };
             ui.set_busy_label(label.into());
-            ui.set_busy(self.scanning.get() || self.updating.get());
+            ui.set_busy(self.scanning.get() || self.updating.get() || crate::files::walking());
         }
     }
 
@@ -962,6 +1051,7 @@ impl App {
             lines.extend(search::lines(
                 query,
                 &self.catalog.borrow(),
+                &self.files.borrow(),
                 &self.usage.borrow(),
                 &config.search,
                 &config.quicklink,
@@ -1153,12 +1243,23 @@ impl App {
         if query.is_empty() || "shortcut keys hotkey open".contains(&query) {
             lines.push(Line::Item(shortcut_item()));
         }
+        let all = appearance::settings(config);
+        let shown = |s: &&appearance::Setting| query.is_empty() || format!("{} {}", s.title, s.about).to_lowercase().contains(&query);
         lines.push(Line::Section("Appearance".into()));
-        for setting in appearance::settings(config) {
-            if !query.is_empty() && !format!("{} {}", setting.title, setting.about).to_lowercase().contains(&query) {
-                continue;
+        lines.extend(all.iter().filter(|s| !appearance::FILES.contains(&s.key)).filter(shown).map(|s| Line::Item(setting_item(s))));
+        lines.push(Line::Section("Files".into()));
+        lines.extend(all.iter().filter(|s| appearance::FILES.contains(&s.key)).filter(shown).map(|s| Line::Item(setting_item(s))));
+        // Folders and rules are lists, edited in the file.
+        for item in crate::catalog::commands().into_iter().filter(|i| matches!(i.run, Run::IndexFiles | Run::SettingsFile)) {
+            if query.is_empty() || format!("{} {}", item.title, item.keywords).to_lowercase().contains(&query) {
+                let mut item = item;
+                if matches!(item.run, Run::SettingsFile) {
+                    item.title = "Folders and Rules".into();
+                    item.subtitle = "Which folders, and what's left out, in the settings file".into();
+                }
+                self.decorate(&mut item);
+                lines.push(Line::Item(item));
             }
-            lines.push(Line::Item(setting_item(&setting)));
         }
         lines.push(Line::Section("Everything else".into()));
         lines.push(Line::Item(settings_item()));
@@ -1297,6 +1398,11 @@ impl App {
             }
             Run::Url(url) => fact("Opens", url.clone()),
             Run::Copy(answer) => fact("Copies", answer.clone()),
+            Run::IndexFiles | Run::Setting("index") => {
+                for (label, value) in crate::files::facts(&self.config.borrow().files) {
+                    fact(label, value);
+                }
+            }
             Run::Clip(id) => {
                 if let Some(clip) = self.history.borrow().get(*id) {
                     fact("Copied", ago(clipboard::now().saturating_sub(clip.at)));
@@ -1436,6 +1542,9 @@ impl App {
         self.start_clipboard();
         self.apply_theme();
         self.apply_appearance();
+        if self.config.borrow().files != before.files {
+            self.index_files(false);
+        }
         self.refresh_keeping(&ui.get_query(), Some(&format!("setting:{key}")));
         let after = self.config.borrow().appearance.clone();
         let renderer_changed = window::wants_gpu(&after) != window::wants_gpu(&before.appearance) && window::needs_restart(&after);
@@ -1521,6 +1630,16 @@ impl App {
             ui.set_query(SharedString::new());
             self.refresh("");
         }
+    }
+
+    /// Backspace with nothing typed: out of a view, back to the main list.
+    fn back(&self) -> bool {
+        let Some(ui) = self.ui.upgrade() else { return false };
+        if self.view.get() == View::Root {
+            return false;
+        }
+        self.leave_view(&ui);
+        true
     }
 
     fn activate(&self, i: i32, alternate: bool) {
@@ -1679,6 +1798,12 @@ impl App {
             }
             Run::Reload => {
                 self.rescan(true);
+                Ok(Done::Stay)
+            }
+            Run::IndexFiles => {
+                *self.config.borrow_mut() = config::load();
+                self.index_files(true);
+                self.refresh_keeping(&ui.get_query(), Some(&item.id));
                 Ok(Done::Stay)
             }
             Run::About => {
@@ -1904,7 +2029,7 @@ fn setting_item(setting: &appearance::Setting) -> Item {
     Item {
         id: format!("setting:{}", setting.key),
         title: setting.title.into(),
-        subtitle: setting.about.into(),
+        subtitle: setting.about.clone(),
         // A setting's current value travels in `keywords` (see refresh_keeping).
         keywords: setting.label().into(),
         kind: Kind::Command,
@@ -1990,7 +2115,7 @@ fn describe(act: &Act, item: &Item, second: bool) -> (String, &'static str, Vec<
 }
 
 /// "3 hours ago", from a number of seconds.
-fn ago(seconds: u64) -> String {
+pub fn ago(seconds: u64) -> String {
     let (minutes, hours, days) = (seconds / 60, seconds / 3600, seconds / 86_400);
     match () {
         _ if minutes < 1 => "Just now".into(),

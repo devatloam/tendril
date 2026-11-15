@@ -27,17 +27,39 @@ const LOOK: Groups = &[
     ("Touches", &["glow", "gradient_divider"]),
 ];
 const LAYOUT: Groups = &[("Size", &["size", "details"]), ("Before you type", &["favourites", "quick_keys", "headings"])];
+const FILES: Groups = &[("Search", &["index", "hidden", "gitignore"])];
 
 thread_local! {
     static WINDOW: RefCell<Option<SettingsWindow>> = const { RefCell::new(None) };
     /// The lists as they're being edited; written to config.toml on every change.
     static ENGINES: RefCell<Vec<config::Engine>> = const { RefCell::new(Vec::new()) };
     static LINKS: RefCell<Vec<config::Quicklink>> = const { RefCell::new(Vec::new()) };
+    /// File search's folders and patterns, as they're being edited.
+    static FILE_LISTS: RefCell<FileLists> = const { RefCell::new(FileLists { folders: Vec::new(), include: Vec::new(), exclude: Vec::new(), exclude_regex: Vec::new() }) };
     /// A change waiting for "Turn On" in the GPU question.
     static PENDING: Cell<Option<(&'static str, i32)>> = const { Cell::new(None) };
 }
 
-/// Opens the window at a tab (0 General … 5 About), or brings it forward if it's open.
+struct FileLists {
+    folders: Vec<String>,
+    include: Vec<String>,
+    exclude: Vec<String>,
+    exclude_regex: Vec<String>,
+}
+
+impl FileLists {
+    fn get(&mut self, name: &str) -> Option<&mut Vec<String>> {
+        match name {
+            "folders" => Some(&mut self.folders),
+            "include" => Some(&mut self.include),
+            "exclude" => Some(&mut self.exclude),
+            "exclude_regex" => Some(&mut self.exclude_regex),
+            _ => None,
+        }
+    }
+}
+
+/// Opens the window at a tab (0 General … 5 Files, 6 About), or brings it forward if it's open.
 pub fn open(tab: i32) {
     let made = WINDOW.with_borrow_mut(|slot| {
         if slot.is_none() {
@@ -90,6 +112,17 @@ pub fn open(tab: i32) {
     });
 }
 
+/// Shows the setting rows as they are now, if the window is open (file search's status changed).
+/// The lists being edited are left alone.
+pub fn refresh() {
+    with_window(|w| choices(w, &config::load()));
+}
+
+/// Only file search's status line: a few times a second while indexing.
+pub fn show_files_status() {
+    with_window(|w| w.set_files_status(crate::files::status().into()));
+}
+
 fn with_window(f: impl FnOnce(&SettingsWindow)) {
     let w = WINDOW.with_borrow(|slot| slot.as_ref().map(ComponentHandle::clone_strong));
     if let Some(w) = w {
@@ -113,7 +146,34 @@ fn close() {
 /// Everything the window shows, from config.toml as it is now.
 fn fill(w: &SettingsWindow) {
     let config = config::load();
-    let all = appearance::settings(&config);
+    choices(w, &config);
+
+    let keys: Vec<SharedString> = hotkey::keycaps(&config.hotkey).into_iter().map(Into::into).collect();
+    w.set_shortcut_keys(ModelRc::new(VecModel::from(keys)));
+    let mut status = (String::new(), true);
+    with_app(|a| status = a.shortcut_status());
+    w.set_shortcut_note(status.0.into());
+    w.set_shortcut_ok(status.1);
+
+    ENGINES.with_borrow_mut(|e| *e = config.search.clone());
+    LINKS.with_borrow_mut(|l| *l = config.quicklink.clone());
+    let f = &config.files;
+    FILE_LISTS.with_borrow_mut(|l| {
+        *l = FileLists {
+            folders: f.folders.clone(),
+            include: f.include.clone(),
+            exclude: f.exclude.clone(),
+            exclude_regex: f.exclude_regex.clone(),
+        }
+    });
+    show_lists(w);
+    w.set_version(update::VERSION.into());
+    theme(w);
+}
+
+/// The setting rows on the General, Look and Layout tabs.
+fn choices(w: &SettingsWindow, config: &config::Config) {
+    let all = appearance::settings(config);
     let groups = |groups: Groups| -> ModelRc<ChoiceGroup> {
         let made: Vec<ChoiceGroup> = groups
             .iter()
@@ -127,7 +187,7 @@ fn fill(w: &SettingsWindow) {
                         Choice {
                             key: s.key.into(),
                             title: s.title.into(),
-                            about: s.about.into(),
+                            about: s.about.as_str().into(),
                             labels: ModelRc::new(VecModel::from(labels)),
                             current: s.current as i32,
                             toggle,
@@ -142,19 +202,8 @@ fn fill(w: &SettingsWindow) {
     w.set_general(groups(GENERAL));
     w.set_look(groups(LOOK));
     w.set_layout(groups(LAYOUT));
-
-    let keys: Vec<SharedString> = hotkey::keycaps(&config.hotkey).into_iter().map(Into::into).collect();
-    w.set_shortcut_keys(ModelRc::new(VecModel::from(keys)));
-    let mut status = (String::new(), true);
-    with_app(|a| status = a.shortcut_status());
-    w.set_shortcut_note(status.0.into());
-    w.set_shortcut_ok(status.1);
-
-    ENGINES.with_borrow_mut(|e| *e = config.search.clone());
-    LINKS.with_borrow_mut(|l| *l = config.quicklink.clone());
-    show_lists(w);
-    w.set_version(update::VERSION.into());
-    theme(w);
+    w.set_files(groups(FILES));
+    w.set_files_status(crate::files::status().into());
 }
 
 fn show_lists(w: &SettingsWindow) {
@@ -166,6 +215,31 @@ fn show_lists(w: &SettingsWindow) {
     });
     w.set_engines(ModelRc::new(VecModel::from(engines)));
     w.set_links(ModelRc::new(VecModel::from(links)));
+    let model = |list: &[String]| -> ModelRc<SharedString> {
+        ModelRc::new(VecModel::from(list.iter().map(|s| s.as_str().into()).collect::<Vec<SharedString>>()))
+    };
+    FILE_LISTS.with_borrow(|l| {
+        w.set_folders(model(&l.folders));
+        w.set_include(model(&l.include));
+        w.set_exclude(model(&l.exclude));
+        w.set_exclude_regex(model(&l.exclude_regex));
+    });
+}
+
+/// Saves one of file search's lists, leaving out entries not filled in yet. The launcher looks
+/// through the folders again the next time it opens, or now with Index Now.
+fn save_file_list(name: &'static str) {
+    let list = FILE_LISTS
+        .with_borrow_mut(|l| l.get(name).map(|v| v.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect::<Vec<_>>()));
+    let Some(list) = list else { return };
+    if let Err(e) = config::set(Some("files"), name, config::Value::List(&list)) {
+        with_window(|w| w.set_files_status(format!("Couldn't save: {e}").into()));
+    }
+    with_app(|a| a.settings_changed());
+}
+
+fn list_name(name: &str) -> Option<&'static str> {
+    ["folders", "include", "exclude", "exclude_regex"].into_iter().find(|n| *n == name)
 }
 
 /// The same colours as the launcher.
@@ -281,6 +355,40 @@ fn wire(w: &SettingsWindow) {
         });
         save_links();
         with_window(show_lists);
+    });
+    w.on_list_edited(|name, i, text| {
+        let Some(name) = list_name(&name) else { return };
+        FILE_LISTS.with_borrow_mut(|l| {
+            if let Some(entry) = l.get(name).and_then(|v| v.get_mut(i as usize)) {
+                *entry = text.to_string();
+            }
+        });
+        save_file_list(name);
+    });
+    w.on_list_add(|name| {
+        let Some(name) = list_name(&name) else { return };
+        FILE_LISTS.with_borrow_mut(|l| {
+            if let Some(v) = l.get(name) {
+                v.push(String::new());
+            }
+        });
+        with_window(show_lists);
+    });
+    w.on_list_remove(|name, i| {
+        let Some(name) = list_name(&name) else { return };
+        FILE_LISTS.with_borrow_mut(|l| {
+            if let Some(v) = l.get(name)
+                && (i as usize) < v.len()
+            {
+                v.remove(i as usize);
+            }
+        });
+        save_file_list(name);
+        with_window(show_lists);
+    });
+    w.on_index_now(|| {
+        with_app(|a| a.index_files(true));
+        show_files_status();
     });
     w.on_check_updates(check_updates);
     w.on_open_file(|| {

@@ -67,7 +67,7 @@ pub fn entries(query: &str) -> Vec<Item> {
     found.into_iter().take(MAX_ENTRIES).map(|(is_dir, name, path)| item(is_dir, name, path)).collect()
 }
 
-fn item(is_dir: bool, name: String, path: PathBuf) -> Item {
+pub fn item(is_dir: bool, name: String, path: PathBuf) -> Item {
     let shown = shorten_home(path.parent().unwrap_or(&path));
     Item {
         id: format!("path:{}", path.display()),

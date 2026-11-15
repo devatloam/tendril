@@ -54,6 +54,8 @@ pub enum Run {
     /// config.toml in your editor.
     SettingsFile,
     Reload,
+    /// Looks through the folders for file search again.
+    IndexFiles,
     About,
     /// The Appearance view.
     Appearance,
@@ -151,6 +153,7 @@ pub fn commands() -> Vec<Item> {
         Item::command("settings-file", "Open Settings File", "config toml edit preferences", "file", 7, Run::SettingsFile),
         Item::command("updates", "Check for Updates", "update upgrade new version", "download", 7, Run::CheckUpdates),
         Item::command("reload", "Reload Apps", "refresh rescan", "refresh", 7, Run::Reload),
+        Item::command("index-files", "Index Files", "files search reindex rescan folders documents status", "folder", 7, Run::IndexFiles),
         Item::command("setup", "Set Up Tendril", "onboarding welcome walkthrough shortcut hotkey", "wave", 7, Run::Onboarding),
         Item::command("about", "About Tendril", "version info", "tendril", 7, Run::About),
         Item::command("lock", "Lock Screen", "lock away", "lock", 7, Run::Power(Power::Lock)),

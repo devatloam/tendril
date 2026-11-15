@@ -16,7 +16,7 @@ enum Kept {
 pub struct Setting {
     pub key: &'static str,
     pub title: &'static str,
-    pub about: &'static str,
+    pub about: String,
     pub icon: &'static str,
     pub tint: i32,
     kept: Kept,
@@ -63,8 +63,8 @@ const OPACITIES: [f32; 6] = [0.6, 0.7, 0.78, 0.85, 0.92, 1.0];
 pub fn settings(config: &Config) -> Vec<Setting> {
     let a = &config.appearance;
     let mut list = Vec::new();
-    let mut add = |key, title, about, icon, tint, section, (choices, current): (Vec<(String, Value<'static>)>, usize)| {
-        list.push(Setting { key, title, about, icon, tint, kept: Kept::Config(section), choices, current });
+    let mut add = |key, title, about: &str, icon, tint, section, (choices, current): (Vec<(String, Value<'static>)>, usize)| {
+        list.push(Setting { key, title, about: about.into(), icon, tint, kept: Kept::Config(section), choices, current });
     };
 
     let mut themes = vec![("system", "System")];
@@ -172,11 +172,15 @@ pub fn settings(config: &Config) -> Vec<Setting> {
         None,
         texts(&[("ask", "Ask"), ("always", "Always"), ("never", "Never")], &config.previews),
     );
+    let f = &config.files;
+    add("index", "File search", "Find files and folders by name as you type", "folder", 7, Some("files"), on_off(f.index));
+    add("hidden", "Hidden files", "Names starting with a dot, like .config", "file", 7, Some("files"), on_off(f.hidden));
+    add("gitignore", "Respect .gitignore", "Skip what a folder's .gitignore lists", "file", 7, Some("files"), on_off(f.gitignore));
     let (choices, current) = on_off(crate::autostart::enabled());
     list.push(Setting {
         key: "login",
         title: "Open at login",
-        about: "Starts hidden, ready for your shortcut",
+        about: "Starts hidden, ready for your shortcut".into(),
         icon: "login",
         tint: 7,
         kept: Kept::Login,
@@ -216,6 +220,8 @@ fn blur_styles() -> Option<(&'static [(&'static str, &'static str)], &'static st
 /// The settings shown at each step of the first-run walkthrough, by key.
 pub const LOOK: &[&str] = &["theme", "style", "selection", "icons", "blur", "blur_style", "opacity", "glow"];
 pub const LAYOUT: &[&str] = &["size", "favourites", "details", "quick_keys", "headings"];
+/// File search's settings, shown under their own heading.
+pub const FILES: &[&str] = &["index", "hidden", "gitignore"];
 
 #[cfg(test)]
 mod tests {

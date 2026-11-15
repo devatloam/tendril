@@ -408,6 +408,61 @@ component Groups inherits VerticalLayout {
     }
 }
 
+// A list of one-line entries you can edit, add to and remove from: folders, patterns.
+component TextList inherits VerticalLayout {
+    in property <string> title;
+    in property <string> about;
+    in property <[string]> entries;
+    in property <string> placeholder;
+    in property <string> add-label;
+    callback edited(int, string);
+    callback add();
+    callback remove(int);
+    spacing: 8px;
+    GroupTitle {
+        text: root.title;
+    }
+
+    Text {
+        text: root.about;
+        color: Look.fluent ? Look.ink-3 : Theme.ink-3;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+
+    for entry[i] in root.entries: Card {
+        HorizontalLayout {
+            padding: 10px;
+            spacing: 8px;
+            Field {
+                horizontal-stretch: 1;
+                text: entry;
+                placeholder: root.placeholder;
+                edited(t) => {
+                    root.edited(i, t);
+                }
+            }
+
+            Button {
+                label: "Remove";
+                clicked => {
+                    root.remove(i);
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        alignment: start;
+        Button {
+            label: root.add-label;
+            clicked => {
+                root.add();
+            }
+        }
+    }
+}
+
 component Tab inherits Rectangle {
     in property <string> label;
     in property <image> icon;
@@ -499,6 +554,13 @@ export component SettingsWindow inherits Window {
     in property <[ChoiceGroup]> layout;
     in property <[Entry]> engines;
     in property <[Entry]> links;
+    // File search: its settings, how the index stands, and its lists.
+    in property <[ChoiceGroup]> files;
+    in property <string> files-status;
+    in property <[string]> folders;
+    in property <[string]> include;
+    in property <[string]> exclude;
+    in property <[string]> exclude-regex;
     in property <[string]> shortcut-keys;
     in property <string> shortcut-note;
     in property <bool> shortcut-ok: true;
@@ -530,6 +592,11 @@ export component SettingsWindow inherits Window {
     callback link-edited(int, string, string);
     callback link-add();
     callback link-remove(int);
+    // Which list ("folders", "include", "exclude", "exclude_regex"), and where in it.
+    callback list-edited(string, int, string);
+    callback list-add(string);
+    callback list-remove(string, int);
+    callback index-now();
     callback check-updates();
     callback open-file();
     callback answer(bool);
@@ -569,22 +636,22 @@ export component SettingsWindow inherits Window {
                     root.dismiss();
                     return accept;
                 }
-                // Tabs from the keyboard: Ctrl Tab and Ctrl Shift Tab, Ctrl 1 to 6, or ↑ ↓ when no
+                // Tabs from the keyboard: Ctrl Tab and Ctrl Shift Tab, Ctrl 1 to 7, or ↑ ↓ when no
                 // field has the keys.
                 if e.modifiers.control && e.text == Key.Tab && !e.modifiers.shift {
-                    root.tab = Math.mod(root.tab + 1, 6);
+                    root.tab = Math.mod(root.tab + 1, 7);
                     return accept;
                 }
                 if e.modifiers.control && (e.text == Key.Backtab || (e.text == Key.Tab && e.modifiers.shift)) {
-                    root.tab = Math.mod(root.tab + 5, 6);
+                    root.tab = Math.mod(root.tab + 6, 7);
                     return accept;
                 }
-                if e.modifiers.control && (e.text == "1" || e.text == "2" || e.text == "3" || e.text == "4" || e.text == "5" || e.text == "6") {
+                if e.modifiers.control && (e.text == "1" || e.text == "2" || e.text == "3" || e.text == "4" || e.text == "5" || e.text == "6" || e.text == "7") {
                     root.tab = e.text.to-float() - 1;
                     return accept;
                 }
                 if keys.has-focus && e.text == Key.DownArrow {
-                    root.tab = min(root.tab + 1, 5);
+                    root.tab = min(root.tab + 1, 6);
                     return accept;
                 }
                 if keys.has-focus && e.text == Key.UpArrow {
@@ -667,11 +734,20 @@ export component SettingsWindow inherits Window {
                         }
 
                         Tab {
-                            label: "About";
-                            icon: @image-url("icons/tendril.svg");
+                            label: "Files";
+                            icon: @image-url("icons/folder.svg");
                             selected: root.tab == 5;
                             clicked => {
                                 root.tab = 5;
+                            }
+                        }
+
+                        Tab {
+                            label: "About";
+                            icon: @image-url("icons/tendril.svg");
+                            selected: root.tab == 6;
+                            clicked => {
+                                root.tab = 6;
                             }
                         }
                     }
@@ -700,7 +776,7 @@ export component SettingsWindow inherits Window {
                             spacing: Look.fluent ? 20px : 18px;
                             alignment: start;
                             Text {
-                                text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : "About";
+                                text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : root.tab == 5 ? "Files" : "About";
                                 color: Theme.ink;
                                 // Windows' page titles are large.
                                 font-size: Look.fluent ? 28px : 20px;
@@ -904,6 +980,121 @@ export component SettingsWindow inherits Window {
                             }
 
                             if root.tab == 5: VerticalLayout {
+                                spacing: 18px;
+                                Card {
+                                    height: 64px;
+                                    HorizontalLayout {
+                                        padding-left: 16px;
+                                        padding-right: 14px;
+                                        spacing: 12px;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 2px;
+                                            horizontal-stretch: 1;
+                                            Text {
+                                                text: "Index";
+                                                color: Look.fluent ? Look.ink : Theme.ink;
+                                                font-size: 13px;
+                                                font-weight: 500;
+                                            }
+
+                                            Text {
+                                                text: root.files-status;
+                                                color: Look.fluent ? Look.ink-3 : Theme.ink-3;
+                                                font-size: 12px;
+                                                overflow: elide;
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Button {
+                                                label: "Index Now";
+                                                clicked => {
+                                                    root.index-now();
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Groups {
+                                    groups: root.files;
+                                    chosen(key, index) => {
+                                        root.chosen(key, index);
+                                    }
+                                }
+
+                                TextList {
+                                    title: "Folders";
+                                    about: root.folders.length == 0 ? "None listed, so your usual folders are looked through: Desktop, Documents, Downloads, Pictures, Music and Videos." : "Looked through for file search, and the folders inside them.";
+                                    entries: root.folders;
+                                    placeholder: "~/Projects or D:/Work";
+                                    add-label: "Add Folder";
+                                    edited(i, t) => {
+                                        root.list-edited("folders", i, t);
+                                    }
+                                    add => {
+                                        root.list-add("folders");
+                                    }
+                                    remove(i) => {
+                                        root.list-remove("folders", i);
+                                    }
+                                }
+
+                                TextList {
+                                    title: "Only these files";
+                                    about: "Written like a .gitignore line, such as *.pdf. With none, every file is found. Folders are always found.";
+                                    entries: root.include;
+                                    placeholder: "*.pdf";
+                                    add-label: "Add Pattern";
+                                    edited(i, t) => {
+                                        root.list-edited("include", i, t);
+                                    }
+                                    add => {
+                                        root.list-add("include");
+                                    }
+                                    remove(i) => {
+                                        root.list-remove("include", i);
+                                    }
+                                }
+
+                                TextList {
+                                    title: "Left out";
+                                    about: "Written like a .gitignore line: node_modules is any file or folder by that name, *.log any name ending so, ~/Downloads/old that one folder.";
+                                    entries: root.exclude;
+                                    placeholder: "node_modules";
+                                    add-label: "Add Pattern";
+                                    edited(i, t) => {
+                                        root.list-edited("exclude", i, t);
+                                    }
+                                    add => {
+                                        root.list-add("exclude");
+                                    }
+                                    remove(i) => {
+                                        root.list-remove("exclude", i);
+                                    }
+                                }
+
+                                TextList {
+                                    title: "Left out by regular expression";
+                                    about: "Matched against the whole path, written with / between folders on every system.";
+                                    entries: root.exclude-regex;
+                                    placeholder: "/build/";
+                                    add-label: "Add Expression";
+                                    edited(i, t) => {
+                                        root.list-edited("exclude_regex", i, t);
+                                    }
+                                    add => {
+                                        root.list-add("exclude_regex");
+                                    }
+                                    remove(i) => {
+                                        root.list-remove("exclude_regex", i);
+                                    }
+                                }
+                            }
+
+                            if root.tab == 6: VerticalLayout {
                                 spacing: 14px;
                                 HorizontalLayout {
                                     spacing: 16px;

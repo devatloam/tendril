@@ -68,6 +68,13 @@ pub fn open(tab: i32) {
             if let Some(w) = weak.upgrade()
                 && let Ok(winit) = w.window().winit_window().await
             {
+                // In the middle of the screen, where the system might put it anywhere.
+                if let Some(monitor) = winit.current_monitor().or_else(|| winit.primary_monitor()) {
+                    let (at, screen, size) = (monitor.position(), monitor.size(), winit.outer_size());
+                    let x = at.x + (screen.width as i32 - size.width as i32) / 2;
+                    let y = at.y + (screen.height as i32 - size.height as i32) / 2;
+                    winit.set_outer_position(slint::winit_030::winit::dpi::PhysicalPosition::new(x, y));
+                }
                 winit.focus_window();
             }
         });

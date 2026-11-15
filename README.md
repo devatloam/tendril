@@ -15,8 +15,10 @@ Download the file for your system from [Releases](https://github.com/devatloam/t
 
 - **Linux** (x86_64): `tendril-<version>-linux-x86_64.tar.gz`. Unpack it and run `./install.sh`: it puts Tendril in
   `~/.local/bin` with a menu entry, and needs no root.
-- **Windows** (x86_64): `tendril-<version>-windows-x86_64.zip`. Put `tendril.exe` somewhere of your own, like
-  `%LOCALAPPDATA%\Programs\Tendril`, and run it. Running it again brings up the copy that's already running, and
+- **Windows** (x86_64): `tendril-<version>-windows-x86_64-setup.exe`. It installs for you alone, without asking for
+  admin rights, into `%LOCALAPPDATA%\Programs\Tendril`, adds Tendril to the Start menu and to Settings → Apps (to
+  uninstall it), and can start it when you sign in. The `.zip` beside it is the same program without an installer.
+  Neither is signed yet, so Windows may warn that it's from an unknown publisher: More info → Run anyway. Running it again brings up the copy that's already running, and
   its icon in the notification area opens it too (right-click for Appearance and Quit). If something's wrong, what
   Tendril noticed is in `%LOCALAPPDATA%\tendril\tendril.log`. If
   Raycast or PowerToys Run is installed, it probably holds Alt+Space already; Tendril says so when it opens, and the
@@ -105,6 +107,12 @@ What you can find:
   Kept in `clipboard.json` beside usage.toml, readable only by you; turning it off deletes it.
 - **Switch Windows**: every open window, most recently used first. Enter brings it forward, Ctrl K closes it. X11 and
   Windows; macOS only shows other apps' windows to apps with the Screen Recording permission, and Wayland doesn't at all.
+- **Windows Settings pages** (on Windows): "bluetooth", "display", "default apps", "windows update" and about thirty
+  more open that page of the Settings app.
+- **Favourites**: what you open most shows before you type. Pin anything there yourself with Ctrl K → Add to
+  Favourites; pinned things come first, in the order you pinned them.
+- **Run as Administrator** (on Windows): in an app's actions (Ctrl K).
+- **What's new**: after Tendril updates itself, the top of the list links to what changed.
 - **Themes**: type "theme" for the palettes from Blight's dashboard (Ember, Midnight, Moss, Dusk, Black, Paper, Sepia,
   Mist). Picking one saves it.
 

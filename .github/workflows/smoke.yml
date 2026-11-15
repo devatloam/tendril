@@ -26,9 +26,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked
+      # Install it the way people will: through the installer, into their own folder.
+      - name: Install
+        shell: pwsh
+        env:
+          VERSION: 0.0.0-smoke
+          TENDRIL_EXE: ${{ github.workspace }}\target\release\tendril.exe
+        run: |
+          choco install innosetup --no-progress -y | Out-Null
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp packaging\tendril.iss
+          $setup = Get-ChildItem dist\*-setup.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/TASKS=login" -Wait
+          Get-Process tendril -ErrorAction SilentlyContinue | Stop-Process
+          $exe = "$env:LOCALAPPDATA\Programs\Tendril\tendril.exe"
+          $menu = Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Tendril.lnk"
+          $login = (Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -ErrorAction SilentlyContinue).Tendril
+          $apps = Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{1B22A48F-20DA-4959-A9EB-F202B0B5A279}_is1"
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          "install: exe there: $(Test-Path $exe); Start menu entry: $menu; starts at sign-in: '$login'; in Settings > Apps: $apps" | Set-Content smoke\install.txt
+          Get-Content smoke\install.txt
       - name: Drive it
         shell: pwsh
-        run: ./scripts/smoke.ps1 -Exe target\release\tendril.exe -Out smoke
+        run: ./scripts/smoke.ps1 -Exe "$env:LOCALAPPDATA\Programs\Tendril\tendril.exe" -Out smoke
       - name: Keep the results
         if: always()
         shell: bash

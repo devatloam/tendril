@@ -90,6 +90,10 @@ There's no window manager, so give the window keyboard focus yourself (python-xl
 
 ## Releasing
 
+- On Windows, people install with the setup.exe that `build.yml` makes from `packaging/tendril.iss` (Inno Setup, per
+  user, no admin). Its AppId is in the updater too (`update::installed_version`), to keep the version Settings → Apps
+  shows in step; change both or neither.
+
 - `bun run bump patch|minor|major` (scripts/release.ts) sets Cargo.toml and Cargo.lock, commits "Release vX.Y.Z" and
   tags it. Don't edit the version by hand. `--dry-run` shows the version and notes without changing anything.
 - A release is published by `.github/workflows/release.yml`, started in one of three ways:

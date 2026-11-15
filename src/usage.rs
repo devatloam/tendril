@@ -13,6 +13,9 @@ pub struct Usage {
     /// Query → the id you picked for it last.
     #[serde(default)]
     picks: HashMap<String, Pick>,
+    /// What you pinned to your favourites, in the order you pinned it.
+    #[serde(default)]
+    pinned: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -65,6 +68,25 @@ impl Usage {
             {
                 self.picks.remove(&oldest);
             }
+        }
+    }
+
+    pub fn pinned(&self) -> &[String] {
+        &self.pinned
+    }
+
+    pub fn is_pinned(&self, id: &str) -> bool {
+        self.pinned.iter().any(|p| p == id)
+    }
+
+    /// Pins it to the favourites, or takes it off. Returns whether it's pinned now.
+    pub fn toggle_pin(&mut self, id: &str) -> bool {
+        if self.is_pinned(id) {
+            self.pinned.retain(|p| p != id);
+            false
+        } else {
+            self.pinned.push(id.to_string());
+            true
         }
     }
 

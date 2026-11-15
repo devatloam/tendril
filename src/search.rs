@@ -107,7 +107,15 @@ fn fill(url: &str, text: &str) -> String {
 /// The list before you type: what you use most, then every command.
 fn root(catalog: &[Item], usage: &Usage) -> Vec<Line> {
     let mut lines = Vec::new();
-    let top: Vec<&Item> = usage.top(SUGGESTIONS).into_iter().filter_map(|id| catalog.iter().find(|i| i.id == id)).collect();
+    // What you pinned, in your order, then what you use most.
+    let pinned = usage.pinned().iter().filter_map(|id| catalog.iter().find(|i| &i.id == id));
+    let used = usage.top(SUGGESTIONS).into_iter().filter_map(|id| catalog.iter().find(|i| i.id == id));
+    let mut top: Vec<&Item> = Vec::new();
+    for item in pinned.chain(used) {
+        if top.len() < SUGGESTIONS.max(usage.pinned().len()) && !top.iter().any(|t| t.id == item.id) {
+            top.push(item);
+        }
+    }
     if !top.is_empty() {
         lines.push(Line::Favourites(top.iter().map(|i| (*i).clone()).collect()));
     }
@@ -115,7 +123,9 @@ fn root(catalog: &[Item], usage: &Usage) -> Vec<Line> {
     lines.extend(
         catalog
             .iter()
-            .filter(|i| i.kind == Kind::Command && !matches!(i.run, Run::Theme(_) | Run::Setting(_)))
+            .filter(|i| {
+                i.kind == Kind::Command && !matches!(i.run, Run::Theme(_) | Run::Setting(_)) && !i.id.starts_with("cmd:ms-settings")
+            })
             .filter(|i| !top.iter().any(|t| t.id == i.id))
             .map(|i| Line::Item(i.clone())),
     );

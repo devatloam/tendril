@@ -66,6 +66,9 @@ jobs:
               mkdir -p "pkg/tendril-$VERSION"
               cp "$out/tendril.exe" README.md LICENSE "pkg/tendril-$VERSION/"
               (cd pkg && 7z a "../dist/tendril-$VERSION-windows-x86_64.zip" "tendril-$VERSION")
+              # The installer most people want: Start menu, uninstall, start at sign-in.
+              choco install innosetup --no-progress -y > /dev/null
+              "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" //Qp packaging/tendril.iss
               ;;
             macOS)
               arch=${{ matrix.target }}; arch=${arch%%-*}

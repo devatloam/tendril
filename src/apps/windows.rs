@@ -89,8 +89,17 @@ pub fn launch(launch: &Launch) -> io::Result<()> {
 }
 
 pub fn shell_open(target: &str) -> io::Result<()> {
+    shell_execute(target, w!("open"))
+}
+
+/// Starts a program elevated: Windows asks for permission first.
+pub fn launch_as_admin(path: &std::path::Path) -> io::Result<()> {
+    shell_execute(&path.to_string_lossy(), w!("runas"))
+}
+
+fn shell_execute(target: &str, verb: PCWSTR) -> io::Result<()> {
     let target = HSTRING::from(target);
-    let result = unsafe { ShellExecuteW(None, w!("open"), &target, PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
+    let result = unsafe { ShellExecuteW(None, verb, &target, PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
     // ShellExecute reports success as any value over 32.
     if result.0 as isize > 32 { Ok(()) } else { Err(io::Error::last_os_error()) }
 }

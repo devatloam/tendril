@@ -114,6 +114,8 @@ pub struct App {
     windows: RefCell<Vec<switcher::Win>>,
     /// The default browser's icon, for rows that open web pages.
     browser: RefCell<Option<crate::catalog::Icon>>,
+    /// The version Tendril was before it updated itself, until you've looked at what's new.
+    updated_from: RefCell<Option<String>>,
     /// Where the pointer was at the last hover. Rows rebuilt or scrolled under a still pointer,
     /// a window opening under it, or focus arriving, all report a hover; only a pointer that
     /// has moved since should take the selection.
@@ -139,6 +141,11 @@ enum Act {
     DeleteClip(u64),
     ClearClips,
     CloseWindow(u64),
+    /// Pin to (false) or unpin from (true) the favourites.
+    Pin(bool),
+    /// Windows: start the program elevated.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    RunAsAdmin(PathBuf),
 }
 
 impl App {
@@ -179,6 +186,7 @@ impl App {
             clipboard_watched: Cell::new(false),
             windows: RefCell::new(Vec::new()),
             browser: RefCell::new(None),
+            updated_from: RefCell::new(updated_from()),
             pointer: Cell::new(None),
             onboarding: Cell::new(None),
             restart_after_onboarding: Cell::new(false),
@@ -885,6 +893,16 @@ impl App {
             item.id = "update-preview".into();
             items.push(item);
         }
+        if let Some(before) = &*self.updated_from.borrow() {
+            let mut item = row(
+                format!("What's New in {}", update::VERSION),
+                format!("Tendril updated itself from {before}"),
+                "sparkle",
+                Run::Url(format!("https://github.com/devatloam/tendril/releases/tag/v{}", update::VERSION)),
+            );
+            item.id = "whats-new".into();
+            items.insert(0, item);
+        }
         if items.is_empty() {
             return Vec::new();
         }
@@ -1532,7 +1550,11 @@ impl App {
             ui.set_confirm_open(true);
             return;
         }
+        if item.id == "whats-new" {
+            self.updated_from.borrow_mut().take();
+        }
         if record
+            && item.id != "whats-new"
             && !matches!(item.kind, Kind::Calculator | Kind::File | Kind::Clip | Kind::Window)
             && !matches!(
                 item.run,
@@ -1798,6 +1820,19 @@ impl App {
                 self.refresh(&ui.get_query());
             }
             Act::NoPreviews => self.decline_previews(),
+            Act::Pin(_) => {
+                let pinned = self.usage.borrow_mut().toggle_pin(&item.id);
+                self.usage.borrow().save();
+                self.toast(if pinned { "Added to favourites" } else { "Removed from favourites" }, false);
+                self.refresh(&ui.get_query());
+            }
+            #[cfg(windows)]
+            Act::RunAsAdmin(path) => match apps::launch_as_admin(&path) {
+                Ok(()) => window::hide(ui),
+                Err(e) => self.toast(&format!("Couldn't start it: {e}"), true),
+            },
+            #[cfg(not(windows))]
+            Act::RunAsAdmin(_) => {}
             Act::CopyClip(id) => {
                 let text = self.history.borrow().get(id).map(|c| c.text.clone());
                 match text.map(|t| system::copy(&t)) {
@@ -1903,6 +1938,16 @@ fn actions_for(item: &Item, usage: &Usage) -> Vec<Act> {
         acts.push(Act::Reveal(path.clone()));
         acts.push(Act::Copy("path", path.to_string_lossy().into_owned()));
     }
+    #[cfg(windows)]
+    if item.kind == Kind::Application
+        && let Some(path) = &item.path
+        && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("lnk"))
+    {
+        acts.push(Act::RunAsAdmin(path.clone()));
+    }
+    if matches!(item.kind, Kind::Application | Kind::Command | Kind::Link) && !item.id.starts_with("cmd:ms-settings") {
+        acts.push(Act::Pin(usage.is_pinned(&item.id)));
+    }
     if item.kind == Kind::Application || item.kind == Kind::Command {
         acts.push(Act::Copy("name", item.title.clone()));
         if usage.bonus(&item.id, "") > 0 {
@@ -1927,6 +1972,9 @@ fn describe(act: &Act, item: &Item, second: bool) -> (String, &'static str, Vec<
         Act::DeleteClip(_) => ("Delete This Copy".into(), "eraser", keys, true),
         Act::ClearClips => ("Clear Clipboard History".into(), "eraser", keys, true),
         Act::CloseWindow(_) => ("Close Window".into(), "quit", keys, true),
+        Act::Pin(false) => ("Add to Favourites".into(), "star", keys, false),
+        Act::Pin(true) => ("Remove from Favourites".into(), "star", keys, false),
+        Act::RunAsAdmin(_) => ("Run as Administrator".into(), "open", keys, false),
     }
 }
 
@@ -1945,4 +1993,16 @@ fn ago(seconds: u64) -> String {
 fn capitalise(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+}
+
+/// The version that ran last time, when it isn't this one: Tendril has been updated since. Each
+/// run notes its own version in the data folder for the next to compare with.
+fn updated_from() -> Option<String> {
+    let path = dirs::data_dir()?.join("tendril").join("version");
+    let before = std::fs::read_to_string(&path).ok().map(|v| v.trim().to_string());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, update::VERSION);
+    before.filter(|b| !b.is_empty() && b != update::VERSION && update::newer(update::VERSION, b))
 }

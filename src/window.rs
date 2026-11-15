@@ -192,13 +192,47 @@ fn place(ui: &Launcher) {
     });
 }
 
+/// The screen the mouse pointer is on: where you're working, as Raycast and Spotlight open.
+fn monitor_under_pointer(w: &winit::window::Window) -> Option<winit::monitor::MonitorHandle> {
+    let (x, y) = pointer()?;
+    w.available_monitors().find(|m| {
+        let (at, size) = (m.position(), m.size());
+        x >= at.x && x < at.x + size.width as i32 && y >= at.y && y < at.y + size.height as i32
+    })
+}
+
+/// The pointer's position on the whole desktop, in physical pixels.
+#[cfg(windows)]
+fn pointer() -> Option<(i32, i32)> {
+    let mut at = windows::Win32::Foundation::POINT::default();
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut at) }.ok()?;
+    Some((at.x, at.y))
+}
+
+#[cfg(target_os = "linux")]
+fn pointer() -> Option<(i32, i32)> {
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    // Wayland has no DISPLAY to ask, and doesn't say where the pointer is.
+    std::env::var_os("DISPLAY")?;
+    let (conn, screen) = x11rb::connect(None).ok()?;
+    let root = x11rb::connection::Connection::setup(&conn).roots[screen].root;
+    let reply = conn.query_pointer(root).ok()?.reply().ok()?;
+    Some((i32::from(reply.root_x), i32::from(reply.root_y)))
+}
+
+/// macOS: winit's own idea of the window's screen stands in.
+#[cfg(target_os = "macos")]
+fn pointer() -> Option<(i32, i32)> {
+    None
+}
+
 /// `blur` is the blur style when the window is see-through.
 fn put(w: &winit::window::Window, blur: Option<&str>, dark: bool) {
     if let Some(style) = blur {
         blur_behind(w, style, dark);
     }
     {
-        if let Some(monitor) = w.primary_monitor().or_else(|| w.current_monitor()) {
+        if let Some(monitor) = monitor_under_pointer(w).or_else(|| w.primary_monitor()).or_else(|| w.current_monitor()) {
             let (at, screen, size) = (monitor.position(), monitor.size(), w.outer_size());
             let x = at.x + (screen.width as i32 - size.width as i32) / 2;
             let y = at.y + (screen.height as i32 - size.height as i32) / 3;

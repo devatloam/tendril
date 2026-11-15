@@ -35,6 +35,8 @@ public static class W {
 
 $report = Join-Path $Out "report.txt"
 "Tendril smoke test, $(Get-Date -Format o)" | Set-Content $report
+$install = Join-Path $Out "install.txt"
+if (Test-Path $install) { Get-Content $install | Add-Content $report }
 function Note($text) { $text | Tee-Object -Append -FilePath $report }
 function Shot($name) {
   $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -146,6 +148,12 @@ Keys "{ESC}"; Start-Sleep -Milliseconds 300
 Keys "^+k"; Start-Sleep -Milliseconds 500
 Keys "clipboard"; Start-Sleep -Milliseconds 300; Keys "{ENTER}"; Start-Sleep -Milliseconds 600
 Shot "10-clipboard"
+
+# 8a. Windows Settings pages are found by name.
+Keys "{ESC}"; Start-Sleep -Milliseconds 200; Keys "{ESC}"; Start-Sleep -Milliseconds 300
+Keys "^+k"; Start-Sleep -Milliseconds 500
+Keys "bluetooth"; Start-Sleep -Milliseconds 600
+Shot "12-windows-settings-page"
 
 # 8b. The Settings window: `tendril settings` opens it on the running Tendril; Esc closes it.
 Keys "{ESC}"; Start-Sleep -Milliseconds 200; Keys "{ESC}"; Start-Sleep -Milliseconds 300

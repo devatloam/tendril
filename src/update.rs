@@ -227,7 +227,28 @@ pub fn install(release: &Release) -> Result<(), String> {
     }
     let replaced = self_replace::self_replace(&staged).map_err(|e| format!("can't replace {} ({e})", exe.display()));
     let _ = std::fs::remove_file(&staged);
+    #[cfg(windows)]
+    if replaced.is_ok() {
+        installed_version(&release.version);
+    }
     replaced
+}
+
+/// Settings > Apps shows the version the installer put there; keep it in step with updates.
+#[cfg(windows)]
+fn installed_version(version: &str) {
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ, RegGetValueW, RegSetKeyValueW};
+    use windows::core::w;
+    let key = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{1B22A48F-20DA-4959-A9EB-F202B0B5A279}_is1");
+    unsafe {
+        // Only when the installer put Tendril there.
+        if RegGetValueW(HKEY_CURRENT_USER, key, w!("DisplayVersion"), RRF_RT_REG_SZ, None, None, None).is_err() {
+            return;
+        }
+        let value: Vec<u16> = version.encode_utf16().chain([0]).collect();
+        let _ =
+            RegSetKeyValueW(HKEY_CURRENT_USER, key, w!("DisplayVersion"), REG_SZ.0, Some(value.as_ptr().cast()), (value.len() * 2) as u32);
+    }
 }
 
 /// The checksum from the release's SHA256SUMS file, for releases whose files carry no digest.

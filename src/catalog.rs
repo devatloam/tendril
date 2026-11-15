@@ -160,6 +160,8 @@ pub fn commands() -> Vec<Item> {
         Item::command("shutdown", "Shut Down", "power off poweroff turn off", "power", 4, Run::Power(Power::ShutDown)),
         Item::command("quit", "Quit Tendril", "exit close", "quit", 7, Run::Quit),
     ];
+    #[cfg(windows)]
+    items.extend(windows_settings());
     if crate::switcher::available() {
         items.insert(1, Item::command("windows", "Switch Windows", "window switch focus alt tab open windows", "windows", 7, Run::Windows));
     }
@@ -215,4 +217,59 @@ pub fn link_target(url: &str) -> Run {
     } else {
         Run::Url(url.to_string())
     }
+}
+
+/// Pages of the Windows Settings app, found by name like any command ("bluetooth", "display"),
+/// with the Settings app's own icon. Not listed before you type.
+#[cfg(windows)]
+fn windows_settings() -> Vec<Item> {
+    const PAGES: &[(&str, &str, &str)] = &[
+        ("Display", "display", "screen resolution scale brightness monitor night light hdr"),
+        ("Sound", "sound", "audio volume speaker microphone output input"),
+        ("Notifications", "notifications", "focus do not disturb alerts"),
+        ("Power & Battery", "powersleep", "battery sleep energy saver power plan"),
+        ("Storage", "storagesense", "disk space cleanup drive"),
+        ("Multitasking", "multitasking", "snap windows virtual desktops alt tab"),
+        ("Clipboard Settings", "clipboard", "clipboard history sync"),
+        ("About This PC", "about", "system info specs device name rename pc version"),
+        ("Bluetooth & Devices", "bluetooth", "bluetooth devices pair headphones mouse keyboard"),
+        ("Printers & Scanners", "printers", "printer scanner print"),
+        ("Mouse", "mousetouchpad", "mouse pointer speed scroll buttons"),
+        ("Touchpad", "devices-touchpad", "touchpad trackpad gestures"),
+        ("Network & Internet", "network", "internet ethernet network status"),
+        ("Wi-Fi", "network-wifi", "wifi wireless network"),
+        ("VPN", "network-vpn", "vpn proxy"),
+        ("Personalization", "personalization", "theme wallpaper colors"),
+        ("Background", "personalization-background", "wallpaper desktop background"),
+        ("Colors", "colors", "dark mode light mode accent color"),
+        ("Taskbar", "taskbar", "taskbar start menu tray"),
+        ("Installed Apps", "appsfeatures", "uninstall apps programs remove"),
+        ("Default Apps", "defaultapps", "default browser default programs file associations"),
+        ("Startup Apps", "startupapps", "startup login apps autostart"),
+        ("Accounts", "yourinfo", "account user profile picture"),
+        ("Sign-in Options", "signinoptions", "password pin windows hello fingerprint"),
+        ("Date & Time", "dateandtime", "clock time zone date"),
+        ("Language & Region", "regionlanguage", "language region keyboard layout input"),
+        ("Typing", "typing", "autocorrect spelling text suggestions"),
+        ("Gaming", "gaming-gamebar", "game bar game mode xbox"),
+        ("Accessibility", "easeofaccess", "accessibility narrator magnifier contrast"),
+        ("Privacy & Security", "privacy", "privacy security permissions"),
+        ("Windows Security", "windowsdefender", "antivirus defender firewall virus"),
+        ("Windows Update", "windowsupdate", "update windows updates patch"),
+    ];
+    const SETTINGS_APP: &str = "shell:AppsFolder\\windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel";
+    PAGES
+        .iter()
+        .map(|(title, page, keywords)| Item {
+            id: format!("cmd:ms-settings:{page}"),
+            title: (*title).into(),
+            subtitle: "Windows Settings".into(),
+            keywords: format!("settings {keywords}"),
+            kind: Kind::Command,
+            icon: Icon::Shell(SETTINGS_APP.into()),
+            tint: 0,
+            run: Run::Url(format!("ms-settings:{page}")),
+            path: None,
+        })
+        .collect()
 }

@@ -16,9 +16,20 @@ public static class W {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-  [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr l);
   public static string Title(IntPtr h) { var s = new StringBuilder(256); GetWindowText(h, s, 256); return s.ToString(); }
+  // Whether any visible top-level window titled Tendril belongs to one of these processes.
+  public static bool AnyVisible(uint[] pids) {
+    bool found = false;
+    EnumWindows((h, l) => {
+      uint pid; GetWindowThreadProcessId(h, out pid);
+      if (Array.IndexOf(pids, pid) >= 0 && IsWindowVisible(h) && Title(h) == "Tendril") { found = true; return false; }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
 }
 "@
 
@@ -33,8 +44,13 @@ function Shot($name) {
   $bmp.Save((Join-Path $Out "$name.png"))
   $g.Dispose(); $bmp.Dispose()
 }
-function Window { [W]::FindWindow($null, "Tendril") }
-function Visible { $h = Window; ($h -ne [IntPtr]::Zero) -and [W]::IsWindowVisible($h) }
+function Pids { [uint32[]](@(Get-Process tendril -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })) }
+function Visible { $p = Pids; ($p.Count -gt 0) -and [W]::AnyVisible($p) }
+function Window {
+  $found = [IntPtr]::Zero
+  foreach ($p in Get-Process tendril -ErrorAction SilentlyContinue) { if ($p.MainWindowHandle -ne [IntPtr]::Zero) { $found = $p.MainWindowHandle } }
+  $found
+}
 function Front { [W]::Title([W]::GetForegroundWindow()) }
 function Keys($k) { [System.Windows.Forms.SendKeys]::SendWait($k) }
 function WaitFor([scriptblock]$cond, [int]$ms = 5000) {
@@ -65,6 +81,14 @@ Note "start: window visible after $shown ms (-1 = never)"
 Start-Sleep -Milliseconds 800
 Note "start: in front: '$(Front)'"
 Shot "01-first-start"
+
+# 1b. The default shortcut, before anything's changed: Alt+Space closes it, and again opens it.
+Keys "% "; $gone = WaitFor { -not (Visible) } 2000
+Note "default shortcut: Alt+Space closed it after $gone ms (-1 = didn't)"
+Keys "% "; $back = WaitFor { Visible } 2000
+Start-Sleep -Milliseconds 300
+Note "default shortcut: Alt+Space opened it after $back ms (-1 = didn't); in front: '$(Front)'"
+Shot "01b-alt-space"
 
 # 2. The shortcut step: record Ctrl+Shift+K.
 Keys "{ENTER}"; Start-Sleep -Milliseconds 500

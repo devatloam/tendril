@@ -190,6 +190,7 @@ impl Backend {
         use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
         let manager = global_hotkey::GlobalHotKeyManager::new().map_err(|e| e.to_string())?;
         GlobalHotKeyEvent::set_event_handler(Some(|event: GlobalHotKeyEvent| {
+            eprintln!("tendril: shortcut {:?}", event.state);
             if event.state == HotKeyState::Pressed {
                 pressed();
             }
@@ -199,13 +200,16 @@ impl Backend {
 
     fn clear(&self) {
         if let Some(old) = self.current.take() {
-            let _ = self.manager.unregister(old);
+            let gone = self.manager.unregister(old);
+            eprintln!("tendril: let go of {old} ({gone:?})");
         }
     }
 
     fn set(&self, hotkey: HotKey) -> Result<(), String> {
         self.clear();
-        self.manager.register(hotkey).map_err(|e| e.to_string())?;
+        let taken = self.manager.register(hotkey);
+        eprintln!("tendril: took {hotkey} ({taken:?})");
+        taken.map_err(|e| e.to_string())?;
         *self.current.borrow_mut() = Some(hotkey);
         Ok(())
     }

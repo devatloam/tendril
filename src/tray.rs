@@ -29,6 +29,7 @@ mod imp {
     const OPEN: usize = 1;
     const APPEARANCE: usize = 2;
     const QUIT: usize = 3;
+    const SETTINGS: usize = 4;
 
     pub fn start() {
         let _ = std::thread::Builder::new().name("tray".into()).stack_size(256 * 1024).spawn(|| unsafe {
@@ -105,6 +106,7 @@ mod imp {
         unsafe {
             let Ok(menu) = CreatePopupMenu() else { return 0 };
             let _ = AppendMenuW(menu, MF_STRING, OPEN, w!("Open Tendril"));
+            let _ = AppendMenuW(menu, MF_STRING, SETTINGS, w!("Settings"));
             let _ = AppendMenuW(menu, MF_STRING, APPEARANCE, w!("Appearance"));
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             let _ = AppendMenuW(menu, MF_STRING, QUIT, w!("Quit Tendril"));
@@ -128,6 +130,7 @@ mod imp {
                         window::show(&ui);
                         app.open_appearance();
                     }
+                    SETTINGS => crate::settings::open(0),
                     QUIT => {
                         let _ = slint::quit_event_loop();
                     }

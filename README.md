@@ -129,9 +129,17 @@ The first time it opens, Tendril walks you through five short steps: a welcome, 
 keys you want; it checks no other app holds them), how it looks, how it's laid out, and done. Esc goes back, or skips
 from the first step. "Set Up Tendril" runs it again.
 
+## Settings
+
+"Settings" (or Ctrl , in the launcher, `tendril settings`, or the tray icon on Windows) opens a Settings window with
+tabs down the side: General (the shortcut, starting, clipboard, updates), Appearance, Layout, Search Engines and
+Quicklinks (add, edit and remove them there), and About. Everything is saved to config.toml the moment it changes.
+"Open Settings File" opens that file itself.
+
 ## Appearance
 
-Search for "Appearance". Every row changes with Enter or ← →, shows straight away and is saved to config.toml:
+The same settings, without leaving the keyboard: search for "Appearance" in the launcher. Every row changes with Enter
+or ← →, shows straight away and is saved to config.toml:
 
 | Setting | Choices |
 | --- | --- |
@@ -283,6 +291,8 @@ src/
   switcher.rs    open windows: listing, bringing forward, closing
   browser.rs     which browser is the default, for its icon
   sites.rs       fetching and keeping quicklinks' site icons
+  settings.rs    the Settings window (ui/settings.slint)
+  tray.rs        the notification area icon on Windows
   usage.rs       what you open, for ranking
   config.rs      config.toml
   palettes.rs    Blight's palettes

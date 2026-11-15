@@ -147,6 +147,17 @@ Keys "^+k"; Start-Sleep -Milliseconds 500
 Keys "clipboard"; Start-Sleep -Milliseconds 300; Keys "{ENTER}"; Start-Sleep -Milliseconds 600
 Shot "10-clipboard"
 
+# 8b. The Settings window: `tendril settings` opens it on the running Tendril; Esc closes it.
+Keys "{ESC}"; Start-Sleep -Milliseconds 200; Keys "{ESC}"; Start-Sleep -Milliseconds 300
+Start-Process $Exe -ArgumentList "settings"
+$settings = WaitFor { [W]::FindWindow($null, "Tendril Settings") -ne [IntPtr]::Zero -and [W]::IsWindowVisible([W]::FindWindow($null, "Tendril Settings")) } 5000
+Start-Sleep -Milliseconds 600
+Note "settings: window visible after $settings ms; in front: '$(Front)'"
+Shot "11-settings"
+Keys "{ESC}"; Start-Sleep -Milliseconds 600
+$h = [W]::FindWindow($null, "Tendril Settings")
+Note "settings: after Esc, still visible: $(($h -ne [IntPtr]::Zero) -and [W]::IsWindowVisible($h))"
+
 # 9. Memory while open, then closed for a while.
 Note "memory open: $(Memory)"
 Keys "{ESC}"; Start-Sleep -Milliseconds 200; Keys "{ESC}"; Start-Sleep -Seconds 5

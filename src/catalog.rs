@@ -49,7 +49,10 @@ pub enum Run {
     Url(String),
     Copy(String),
     Theme(&'static str),
+    /// The Settings window.
     Settings,
+    /// config.toml in your editor.
+    SettingsFile,
     Reload,
     About,
     /// The Appearance view.
@@ -144,7 +147,8 @@ pub fn commands() -> Vec<Item> {
         Item::command("clipboard", "Clipboard History", "clipboard copied paste history clip", "clipboard", 7, Run::Clipboard),
         Item::command("clear-clipboard", "Clear Clipboard History", "clipboard forget delete copied", "eraser", 7, Run::ClearClipboard),
         Item::command("appearance", "Appearance", "settings look theme blur glow compact details grid keys", "palette", 7, Run::Appearance),
-        Item::command("settings", "Tendril Settings", "preferences config hotkey", "settings", 7, Run::Settings),
+        Item::command("settings", "Settings", "preferences options config hotkey shortcut tendril", "settings", 7, Run::Settings),
+        Item::command("settings-file", "Open Settings File", "config toml edit preferences", "file", 7, Run::SettingsFile),
         Item::command("updates", "Check for Updates", "update upgrade new version", "download", 7, Run::CheckUpdates),
         Item::command("reload", "Reload Apps", "refresh rescan", "refresh", 7, Run::Reload),
         Item::command("setup", "Set Up Tendril", "onboarding welcome walkthrough shortcut hotkey", "wave", 7, Run::Onboarding),

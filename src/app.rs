@@ -459,6 +459,45 @@ impl App {
     }
 
     /// A key press while the shortcut row is selected: the new shortcut, if it is one.
+    /// Takes `combo` as the shortcut that opens Tendril, and saves it.
+    pub fn take_shortcut(&self, combo: &str) -> Result<(), String> {
+        let hotkeys = self.hotkeys.borrow();
+        let hotkeys = hotkeys.as_ref().ok_or("there's no global key to take here")?;
+        hotkeys.change(combo)?;
+        config::set(None, "hotkey", config::Value::Text(combo)).map_err(|e| format!("couldn't save it: {e}"))?;
+        self.config.borrow_mut().hotkey = combo.to_string();
+        Ok(())
+    }
+
+    /// Lets go of the shortcut while new keys are recorded, so pressing it doesn't open Tendril.
+    pub fn pause_shortcut(&self, paused: bool) {
+        if let Some(hotkeys) = &*self.hotkeys.borrow() {
+            if paused { hotkeys.pause() } else { hotkeys.resume() }
+        }
+    }
+
+    /// What to say about the shortcut, and whether it's working.
+    pub fn shortcut_status(&self) -> (String, bool) {
+        match &*self.hotkeys.borrow() {
+            None => ("Bind tendril toggle in your desktop's keyboard settings".into(), false),
+            Some(h) if !h.available() => ("Bind tendril toggle in your desktop's keyboard settings".into(), false),
+            Some(h) if h.refused().is_some() => ("Another app uses these keys. Change them to open Tendril".into(), false),
+            Some(_) => ("Opens Tendril from any app".into(), true),
+        }
+    }
+
+    /// The palette in use, as apply_theme picks it.
+    pub fn palette(&self) -> &'static palettes::Palette {
+        let config = self.config.borrow();
+        let dark = self.ui.upgrade().is_some_and(|ui| ui.get_system_dark());
+        let key = if config.theme.eq_ignore_ascii_case("system") {
+            if dark { &config.dark_theme } else { &config.light_theme }
+        } else {
+            &config.theme
+        };
+        palettes::find(key).unwrap_or(&palettes::PALETTES[0])
+    }
+
     fn record(&self, text: &str, control: bool, alt: bool, shift: bool, meta: bool) -> bool {
         let Some(combo) = crate::hotkey::shortcut(text, control, alt, shift, meta) else { return false };
         let Some(ui) = self.ui.upgrade() else { return true };
@@ -644,7 +683,7 @@ impl App {
     }
 
     /// "Check for Updates": now, and say what came of it.
-    fn check_updates_now(&self) {
+    pub fn check_updates_now(&self) {
         if self.updating.replace(true) {
             return;
         }
@@ -665,7 +704,18 @@ impl App {
         }
     }
 
-    fn update_checked(&self, result: Result<update::Found, String>, asked: bool) {
+    /// The Settings window changed something the catalog depends on (quicklinks, engines).
+    pub fn settings_changed(&self) {
+        *self.config.borrow_mut() = config::load();
+        self.rebuild_catalog();
+        if let Some(ui) = self.ui.upgrade()
+            && ui.window().is_visible()
+        {
+            self.refresh(&ui.get_query());
+        }
+    }
+
+    pub fn update_checked(&self, result: Result<update::Found, String>, asked: bool) {
         let ours = update::VERSION;
         let (mode, previews) = {
             let config = self.config.borrow();
@@ -1302,10 +1352,9 @@ impl App {
         (0..rows.row_count()).filter(|&i| rows.row_data(i).is_some_and(|r| r.kind == 4)).collect()
     }
 
-    /// Changes a setting, asking first when the change would switch Tendril to drawing with the
-    /// GPU (Modern style, or blur where only the GPU can see through).
-    fn change_setting(&self, key: &'static str, delta: i32) {
-        let Some(ui) = self.ui.upgrade() else { return };
+    /// When changing `key` by `delta` would switch Tendril to drawing with the GPU (Modern style,
+    /// or blur where only the GPU can see through): what to ask, and the icon to ask it with.
+    pub fn gpu_question(&self, key: &'static str, delta: i32) -> Option<(String, &'static str)> {
         let before = self.config.borrow().appearance.clone();
         let mut after = before.clone();
         let next = appearance::settings(&self.config.borrow()).into_iter().find(|s| s.key == key).map(|s| s.next(delta).clone());
@@ -1314,20 +1363,29 @@ impl App {
             ("blur", Some(config::Value::Bool(v))) => after.blur = v,
             _ => {}
         }
-        if window::wants_gpu(&after) && !window::wants_gpu(&before) && !window::is_gpu() {
-            let what = if key == "style" { "The Modern style" } else { "Blur, on this system," };
+        if !(window::wants_gpu(&after) && !window::wants_gpu(&before) && !window::is_gpu()) {
+            return None;
+        }
+        let what = if key == "style" { "The Modern style" } else { "Blur, on this system," };
+        Some((
+            format!(
+                "{what} needs Tendril to draw with your graphics card. That keeps more memory and power in use \
+                 for as long as Tendril runs. If your computer feels slower afterwards, turn this back off. \
+                 Tendril restarts to switch."
+            ),
+            if key == "style" { "sparkle" } else { "blur" },
+        ))
+    }
+
+    /// Changes a setting, asking first when the change would switch to the GPU.
+    fn change_setting(&self, key: &'static str, delta: i32) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        if let Some((message, icon)) = self.gpu_question(key, delta) {
             ui.set_confirm_title("Draw with the GPU?".into());
-            ui.set_confirm_message(
-                format!(
-                    "{what} needs Tendril to draw with your graphics card. That keeps more memory and power in use \
-                     for as long as Tendril runs. If your computer feels slower afterwards, turn this back off. \
-                     Tendril restarts to switch."
-                )
-                .into(),
-            );
+            ui.set_confirm_message(message.into());
             ui.set_confirm_label("Turn On".into());
             ui.set_confirm_danger(false);
-            ui.set_confirm_icon(self.icons.borrow_mut().builtin_solid(if key == "style" { "sparkle" } else { "blur" }));
+            ui.set_confirm_icon(self.icons.borrow_mut().builtin_solid(icon));
             self.pending_setting.set(Some((key, delta)));
             ui.set_actions_open(false);
             ui.set_confirm_open(true);
@@ -1336,7 +1394,7 @@ impl App {
         self.apply_setting(key, delta);
     }
 
-    fn apply_setting(&self, key: &'static str, delta: i32) {
+    pub fn apply_setting(&self, key: &'static str, delta: i32) {
         let Some(ui) = self.ui.upgrade() else { return };
         let before = self.config.borrow().clone();
         let Some(setting) = appearance::settings(&before).into_iter().find(|s| s.key == key) else { return };
@@ -1489,7 +1547,11 @@ impl App {
             Run::Power(power) => system::power(*power).map_err(|e| e.to_string()).map(|_| Done::Hide),
             Run::Url(url) => system::open(url).map_err(|e| e.to_string()).map(|_| Done::Hide),
             Run::Copy(text) => system::copy(text).map(|_| Done::Toast("Copied to clipboard".into(), true)),
-            Run::Settings => system::open(&config::path().to_string_lossy()).map_err(|e| e.to_string()).map(|_| Done::Hide),
+            Run::Settings => {
+                crate::settings::open(0);
+                Ok(Done::Hide)
+            }
+            Run::SettingsFile => system::open(&config::path().to_string_lossy()).map_err(|e| e.to_string()).map(|_| Done::Hide),
             Run::Theme(key) => {
                 self.config.borrow_mut().theme = key.to_string();
                 self.apply_theme();

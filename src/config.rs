@@ -339,6 +339,62 @@ pub fn set(section: Option<&str>, key: &str, value: Value) -> std::io::Result<()
     std::fs::write(&path, with(&text, section, key, &value.literal()))
 }
 
+/// Replaces every `[[name]]` block in config.toml with these entries, each a list of
+/// (key, value) pairs, keeping everything else in the file, comments included.
+pub fn set_list(name: &str, entries: &[Vec<(&str, Value)>]) -> std::io::Result<()> {
+    let path = path();
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| template());
+    std::fs::write(&path, with_list(&text, name, entries))
+}
+
+fn with_list(text: &str, name: &str, entries: &[Vec<(&str, Value)>]) -> String {
+    let header = format!("[[{name}]]");
+    let lines: Vec<&str> = text.lines().collect();
+    let mut kept: Vec<String> = Vec::with_capacity(lines.len());
+    let mut first_block = None;
+    let empty = format!("{name} = []");
+    let mut i = 0;
+    while i < lines.len() {
+        // `name = []`, written when the list was emptied: replaced by whatever's written now.
+        if lines[i].trim() == empty {
+            i += 1;
+            continue;
+        }
+        if lines[i].trim() == header {
+            first_block.get_or_insert(kept.len());
+            // The block: its header and the settings and blank lines after it. A comment or a
+            // header starts whatever comes next.
+            i += 1;
+            while i < lines.len() && !lines[i].trim_start().starts_with(['[', '#']) {
+                i += 1;
+            }
+            continue;
+        }
+        kept.push(lines[i].to_string());
+        i += 1;
+    }
+    let mut blocks = Vec::new();
+    for entry in entries {
+        blocks.push(header.clone());
+        blocks.extend(entry.iter().map(|(k, v)| format!("{k} = {}", v.literal())));
+        blocks.push(String::new());
+    }
+    let at = first_block.unwrap_or_else(|| {
+        if kept.last().is_some_and(|l| !l.trim().is_empty()) {
+            kept.push(String::new());
+        }
+        kept.len()
+    });
+    kept.splice(at..at, blocks);
+    while kept.last().is_some_and(|l| l.trim().is_empty()) {
+        kept.pop();
+    }
+    let text = kept.join("\n") + "\n";
+    // No blocks at all would read as "not set" and bring the built-in examples back, so an empty
+    // list is said out loud, at the top where TOML wants plain keys.
+    if entries.is_empty() { with(&text, None, name, "[]") } else { text }
+}
+
 fn with(text: &str, section: Option<&str>, key: &str, literal: &str) -> String {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let line = format!("{key} = {literal}");
@@ -383,6 +439,33 @@ mod tests {
         assert_eq!(config.search.len(), default.search.len());
         assert_eq!(config.theme, default.theme);
         assert!(config.appearance == default.appearance);
+    }
+
+    #[test]
+    fn rewrites_lists_and_keeps_comments() {
+        let text = with_list(
+            TEMPLATE,
+            "search",
+            &[vec![("name", Value::Text("Kagi")), ("url", Value::Text("https://kagi.com/search?q={query}"))]],
+        );
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(config.search.len(), 1);
+        assert_eq!(config.search[0].name, "Kagi");
+        assert_eq!(config.quicklink.len(), 1, "the quicklinks are left alone");
+        assert!(text.contains("# Your own links."), "the comment before the next list stays");
+        assert!(text.contains("# Offered under your results"), "and the one before this list");
+
+        let none = with_list(&text, "quicklink", &[]);
+        let config: Config = toml::from_str(&none).unwrap();
+        assert!(config.quicklink.is_empty());
+        let added = with_list(
+            &none,
+            "quicklink",
+            &[vec![("name", Value::Text("Docs")), ("keyword", Value::Text("d")), ("url", Value::Text("~/Documents"))]],
+        );
+        let config: Config = toml::from_str(&added).unwrap();
+        assert_eq!(config.quicklink[0].url, "~/Documents");
+        assert_eq!(config.search[0].name, "Kagi");
     }
 
     #[test]

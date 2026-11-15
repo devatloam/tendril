@@ -25,7 +25,11 @@ Windows and macOS can be checked from Linux: `rustup target add x86_64-pc-window
 - `src/app.rs`: the state behind the window (list, selection, actions, Appearance view, first run, updates).
 - `src/apps/{linux,windows,macos}.rs`: finding and launching apps, one module per system with the same functions.
 - `src/window.rs`: showing, placing, hiding, and asking the system for blur.
-- `src/config.rs`: config.toml. The Appearance view writes it one line at a time with `config::set`, keeping comments.
+- `src/config.rs`: config.toml. Settings are written one line at a time with `config::set`, and the search engine and
+  quicklink lists with `config::set_list`, both keeping comments.
+- `ui/settings.slint` + `src/settings.rs`: the Settings window, made when opened and dropped when closed. Its rows come
+  from `appearance::settings`, the same list the launcher's Appearance view uses; changes go through
+  `App::apply_setting`, so both behave the same (GPU question, restart).
 - README.md says what each of the other files is for.
 
 ## Rules that keep it light

@@ -16,6 +16,7 @@ mod ipc;
 mod palettes;
 mod paths;
 mod search;
+mod settings;
 mod sites;
 mod switcher;
 mod system;
@@ -34,20 +35,23 @@ tendril: a keyboard launcher
 
   tendril               start, or open the one that's running
   tendril --hidden      start without opening the window (for login items)
-  tendril --appearance  start, or open the running one, on the Appearance settings
+  tendril settings      open the Settings window (starting Tendril if it isn't running)
+  tendril --appearance  start, or open the running one, on the Appearance view
   tendril toggle        open or close the running Tendril; bind this on Wayland
   tendril show | hide
   tendril --version
 
-Settings live in config.toml; \"Tendril Settings\" opens it.
+Settings live in config.toml; the Settings window changes them, and \"Open Settings File\" opens it.
 ";
 
 fn main() -> ExitCode {
     let mut start_hidden = false;
     let mut appearance = false;
+    let mut settings = false;
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--appearance" => appearance = true,
+            "--settings" | "settings" => settings = true,
             // Started again by the one before it (see app::RESTART): give it a moment to let go of
             // the hotkey and the socket.
             "--restarted" => std::thread::sleep(std::time::Duration::from_millis(300)),
@@ -77,7 +81,15 @@ fn main() -> ExitCode {
     }
 
     // Already running: bring that one up instead of starting a second.
-    if ipc::send(if appearance { "appearance" } else { "show" }).is_ok() {
+    if ipc::send(if settings {
+        "settings"
+    } else if appearance {
+        "appearance"
+    } else {
+        "show"
+    })
+    .is_ok()
+    {
         return ExitCode::SUCCESS;
     }
 
@@ -90,11 +102,13 @@ fn main() -> ExitCode {
         std::env::set_var("SLINT_DESTROY_WINDOW_ON_HIDE", "1")
     };
 
-    match run(start_hidden, appearance) {
+    match run(start_hidden || settings, appearance, settings) {
         Ok(()) if app::RESTART.load(std::sync::atomic::Ordering::SeqCst) => {
             // Everything above has been dropped; start the next Tendril and leave.
             let me = std::env::current_exe().ok();
-            let args: &[&str] = if app::RESTART_TO_APPEARANCE.load(std::sync::atomic::Ordering::SeqCst) {
+            let args: &[&str] = if settings::REOPEN_AFTER_RESTART.load(std::sync::atomic::Ordering::SeqCst) {
+                &["--restarted", "--hidden", "--settings"]
+            } else if app::RESTART_TO_APPEARANCE.load(std::sync::atomic::Ordering::SeqCst) {
                 &["--restarted", "--appearance"]
             } else {
                 &["--restarted"]
@@ -135,7 +149,7 @@ fn log_to_file() {
     }
 }
 
-fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn run(start_hidden: bool, appearance: bool, open_settings: bool) -> Result<(), Box<dyn std::error::Error>> {
     // Only the Tendril that stays running writes the log; one that hands over to it and leaves
     // would start the file afresh under it.
     #[cfg(windows)]
@@ -168,6 +182,7 @@ fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::E
                         window::show(&ui);
                         app.open_appearance();
                     }
+                    "settings" => settings::open(0),
                     _ => {}
                 }
             })
@@ -181,6 +196,9 @@ fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::E
         if appearance {
             app.open_appearance();
         }
+    }
+    if open_settings {
+        settings::open(0);
     }
     slint::run_event_loop_until_quit()?;
     app.closing();

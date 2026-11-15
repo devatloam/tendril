@@ -41,8 +41,12 @@ thread_local! {
 pub fn open(tab: i32) {
     let made = WINDOW.with_borrow_mut(|slot| {
         if slot.is_none() {
-            match SettingsWindow::new() {
+            match crate::window::plain(SettingsWindow::new) {
                 Ok(w) => {
+                    let (frameless, corner, inset) = crate::window::settings_frame();
+                    w.set_frameless(frameless);
+                    w.set_corner(corner);
+                    w.set_top_inset(inset);
                     wire(&w);
                     *slot = Some(w);
                 }
@@ -75,6 +79,7 @@ pub fn open(tab: i32) {
                     let y = at.y + (screen.height as i32 - size.height as i32) / 2;
                     winit.set_outer_position(slint::winit_030::winit::dpi::PhysicalPosition::new(x, y));
                 }
+                crate::window::round(&winit);
                 winit.focus_window();
             }
         });
@@ -177,6 +182,17 @@ fn theme(w: &SettingsWindow) {
 fn wire(w: &SettingsWindow) {
     w.on_chosen(|key, index| choose(&key, index));
     w.on_dismiss(close);
+    // Its own title bar, where the window has no frame from the system.
+    w.on_drag(|| {
+        with_window(|w| {
+            let _ = w.window().with_winit_window(|winit| winit.drag_window());
+        })
+    });
+    w.on_minimize(|| {
+        with_window(|w| {
+            let _ = w.window().with_winit_window(|winit| winit.set_minimized(true));
+        })
+    });
     w.window().on_close_requested(|| {
         close();
         slint::CloseRequestResponse::KeepWindowShown

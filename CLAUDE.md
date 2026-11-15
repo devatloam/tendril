@@ -30,6 +30,8 @@ Windows and macOS can be checked from Linux: `rustup target add x86_64-pc-window
 - `ui/settings.slint` + `src/settings.rs`: the Settings window, made when opened and dropped when closed. Its rows come
   from `appearance::settings`, the same list the launcher's Appearance view uses; changes go through
   `App::apply_setting`, so both behave the same (GPU question, restart).
+  It's made inside `window::plain`, so it doesn't get the launcher's window attributes (on top, out of the taskbar),
+  and draws its own frame and title bar where `window::settings_frame` says the system's would look out of place.
 - README.md says what each of the other files is for.
 
 ## Rules that keep it light

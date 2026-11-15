@@ -352,12 +352,39 @@ component Tab inherits Rectangle {
     }
 }
 
+// Minimize or close, at the top right, as Windows draws them: red under the pointer for close.
+component CaptionButton inherits Rectangle {
+    in property <bool> close;
+    callback clicked();
+    width: 46px;
+    height: 36px;
+    background: touch.has-hover ? (close ? #c42b1c : Theme.ink.with-alpha(touch.pressed ? 0.12 : 0.07)) : transparent;
+    animate background { duration: 90ms; }
+    Path {
+        width: 10px;
+        height: 10px;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        stroke: touch.has-hover && root.close ? white : Theme.ink-2;
+        stroke-width: 1px;
+        commands: root.close ? "M 0 0 L 10 10 M 10 0 L 0 10" : "M 0 5 L 10 5";
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 export component SettingsWindow inherits Window {
     title: "Tendril Settings";
     icon: @image-url("../assets/tendril-256.png");
     width: 800px;
     height: 560px;
-    background: Theme.panel;
+    // Without the system's frame, Tendril draws its own (settings.rs says where).
+    no-frame: frameless;
+    background: corner > 0 ? transparent : Theme.panel;
     default-font-family: "Geist";
     default-font-size: 13px;
 
@@ -373,6 +400,13 @@ export component SettingsWindow inherits Window {
     in-out property <bool> recording;
     in property <string> version;
     in property <string> update-note;
+
+    in property <bool> frameless;
+    // Rounded by Slint (Linux); Windows 11 and macOS round windows themselves.
+    in property <length> corner;
+    // Room at the top for the system's own buttons (macOS).
+    in property <length> top-inset;
+    property <length> bar: frameless ? 36px : 0px;
 
     in property <bool> confirm-open;
     in property <string> confirm-title;
@@ -394,434 +428,487 @@ export component SettingsWindow inherits Window {
     callback open-file();
     callback answer(bool);
     callback dismiss();
+    callback drag();
+    callback minimize();
 
     forward-focus: keys;
-    keys := FocusScope {
-        capture-key-pressed(e) => {
-            if root.confirm-open {
-                if e.text == Key.Escape {
-                    root.answer(false);
-                } else if e.text == Key.Return {
-                    root.answer(true);
-                }
-                return accept;
-            }
-            if root.recording {
-                if e.text == Key.Escape {
-                    root.stop-recording();
+    Rectangle {
+        border-radius: root.corner;
+        clip: root.corner > 0;
+        background: Theme.panel;
+        border-width: root.corner > 0 ? 1px : 0px;
+        border-color: Theme.line;
+
+        keys := FocusScope {
+            capture-key-pressed(e) => {
+                if root.confirm-open {
+                    if e.text == Key.Escape {
+                        root.answer(false);
+                    } else if e.text == Key.Return {
+                        root.answer(true);
+                    }
                     return accept;
                 }
-                if root.record(e.text, e.modifiers.control, e.modifiers.alt, e.modifiers.shift, e.modifiers.meta) {
+                if root.recording {
+                    if e.text == Key.Escape {
+                        root.stop-recording();
+                        return accept;
+                    }
+                    if root.record(e.text, e.modifiers.control, e.modifiers.alt, e.modifiers.shift, e.modifiers.meta) {
+                        return accept;
+                    }
                     return accept;
                 }
-                return accept;
-            }
-            if e.text == Key.Escape || (e.modifiers.control && (e.text == "w" || e.text == "W")) {
-                root.dismiss();
-                return accept;
-            }
-            // Tabs from the keyboard: Ctrl Tab and Ctrl Shift Tab, Ctrl 1 to 6, or ↑ ↓ when no
-            // field has the keys.
-            if e.modifiers.control && e.text == Key.Tab && !e.modifiers.shift {
-                root.tab = Math.mod(root.tab + 1, 6);
-                return accept;
-            }
-            if e.modifiers.control && (e.text == Key.Backtab || (e.text == Key.Tab && e.modifiers.shift)) {
-                root.tab = Math.mod(root.tab + 5, 6);
-                return accept;
-            }
-            if e.modifiers.control && (e.text == "1" || e.text == "2" || e.text == "3" || e.text == "4" || e.text == "5" || e.text == "6") {
-                root.tab = e.text.to-float() - 1;
-                return accept;
-            }
-            if keys.has-focus && e.text == Key.DownArrow {
-                root.tab = min(root.tab + 1, 5);
-                return accept;
-            }
-            if keys.has-focus && e.text == Key.UpArrow {
-                root.tab = max(root.tab - 1, 0);
-                return accept;
-            }
-            reject
-        }
-
-        HorizontalLayout {
-            // The tabs.
-            Rectangle {
-                width: 196px;
-                background: Theme.dark ? Theme.sunken : Theme.bg;
-                VerticalLayout {
-                    padding: 12px;
-                    padding-top: 16px;
-                    spacing: 2px;
-                    alignment: start;
-                    Text {
-                        text: "Settings";
-                        color: Theme.ink;
-                        font-size: 15px;
-                        font-weight: 600;
-                        height: 34px;
-                        vertical-alignment: center;
-                        x: 10px;
-                    }
-
-                    Tab {
-                        label: "General";
-                        icon: @image-url("icons/settings.svg");
-                        selected: root.tab == 0;
-                        clicked => {
-                            root.tab = 0;
-                        }
-                    }
-
-                    Tab {
-                        label: "Appearance";
-                        icon: @image-url("icons/palette.svg");
-                        selected: root.tab == 1;
-                        clicked => {
-                            root.tab = 1;
-                        }
-                    }
-
-                    Tab {
-                        label: "Layout";
-                        icon: @image-url("icons/columns.svg");
-                        selected: root.tab == 2;
-                        clicked => {
-                            root.tab = 2;
-                        }
-                    }
-
-                    Tab {
-                        label: "Search Engines";
-                        icon: @image-url("icons/globe.svg");
-                        selected: root.tab == 3;
-                        clicked => {
-                            root.tab = 3;
-                        }
-                    }
-
-                    Tab {
-                        label: "Quicklinks";
-                        icon: @image-url("icons/link.svg");
-                        selected: root.tab == 4;
-                        clicked => {
-                            root.tab = 4;
-                        }
-                    }
-
-                    Tab {
-                        label: "About";
-                        icon: @image-url("icons/tendril.svg");
-                        selected: root.tab == 5;
-                        clicked => {
-                            root.tab = 5;
-                        }
-                    }
+                if e.text == Key.Escape || (e.modifiers.control && (e.text == "w" || e.text == "W")) {
+                    root.dismiss();
+                    return accept;
                 }
+                // Tabs from the keyboard: Ctrl Tab and Ctrl Shift Tab, Ctrl 1 to 6, or ↑ ↓ when no
+                // field has the keys.
+                if e.modifiers.control && e.text == Key.Tab && !e.modifiers.shift {
+                    root.tab = Math.mod(root.tab + 1, 6);
+                    return accept;
+                }
+                if e.modifiers.control && (e.text == Key.Backtab || (e.text == Key.Tab && e.modifiers.shift)) {
+                    root.tab = Math.mod(root.tab + 5, 6);
+                    return accept;
+                }
+                if e.modifiers.control && (e.text == "1" || e.text == "2" || e.text == "3" || e.text == "4" || e.text == "5" || e.text == "6") {
+                    root.tab = e.text.to-float() - 1;
+                    return accept;
+                }
+                if keys.has-focus && e.text == Key.DownArrow {
+                    root.tab = min(root.tab + 1, 5);
+                    return accept;
+                }
+                if keys.has-focus && e.text == Key.UpArrow {
+                    root.tab = max(root.tab - 1, 0);
+                    return accept;
+                }
+                reject
+            }
 
+            HorizontalLayout {
+                // The tabs.
                 Rectangle {
-                    x: parent.width - 1px;
-                    width: 1px;
-                    background: Theme.line;
-                }
-            }
-
-            // The tab's page.
-            page := Flickable {
-                horizontal-stretch: 1;
-                content-height: max(content.preferred-height, self.height);
-                content := VerticalLayout {
-                    padding: 28px;
-                    padding-top: 24px;
-                    spacing: 18px;
-                    alignment: start;
-                    Text {
-                        text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : "About";
-                        color: Theme.ink;
-                        font-size: 20px;
-                        font-weight: 600;
-                    }
-
-                    if root.tab == 0: VerticalLayout {
-                        spacing: 8px;
-                        padding-bottom: 12px;
-                        GroupTitle {
-                            text: "Shortcut";
+                    width: 196px;
+                    background: Theme.dark ? Theme.sunken : Theme.bg;
+                    // The software renderer doesn't clip to rounded corners, so the sidebar
+                    // rounds its own.
+                    border-top-left-radius: root.corner;
+                    border-bottom-left-radius: root.corner;
+                    VerticalLayout {
+                        padding: 12px;
+                        padding-top: root.frameless ? 8px : 16px + root.top-inset;
+                        spacing: 2px;
+                        alignment: start;
+                        Text {
+                            text: "Settings";
+                            color: Theme.ink;
+                            font-size: 15px;
+                            font-weight: 600;
+                            height: 34px;
+                            vertical-alignment: center;
+                            x: 10px;
                         }
 
-                        Card {
-                            height: 64px;
-                            HorizontalLayout {
-                                padding-left: 16px;
-                                padding-right: 14px;
-                                spacing: 12px;
-                                VerticalLayout {
-                                    alignment: center;
-                                    spacing: 2px;
-                                    horizontal-stretch: 1;
-                                    Text {
-                                        text: "Open Tendril with";
-                                        color: Theme.ink;
-                                        font-size: 13px;
-                                        font-weight: 500;
-                                    }
+                        Tab {
+                            label: "General";
+                            icon: @image-url("icons/settings.svg");
+                            selected: root.tab == 0;
+                            clicked => {
+                                root.tab = 0;
+                            }
+                        }
 
-                                    Text {
-                                        text: root.recording ? "Press the keys you'd like. Esc stops." : root.shortcut-note;
-                                        color: root.shortcut-ok || root.recording ? Theme.ink-3 : Theme.red;
-                                        font-size: 12px;
-                                        overflow: elide;
-                                    }
+                        Tab {
+                            label: "Appearance";
+                            icon: @image-url("icons/palette.svg");
+                            selected: root.tab == 1;
+                            clicked => {
+                                root.tab = 1;
+                            }
+                        }
+
+                        Tab {
+                            label: "Layout";
+                            icon: @image-url("icons/columns.svg");
+                            selected: root.tab == 2;
+                            clicked => {
+                                root.tab = 2;
+                            }
+                        }
+
+                        Tab {
+                            label: "Search Engines";
+                            icon: @image-url("icons/globe.svg");
+                            selected: root.tab == 3;
+                            clicked => {
+                                root.tab = 3;
+                            }
+                        }
+
+                        Tab {
+                            label: "Quicklinks";
+                            icon: @image-url("icons/link.svg");
+                            selected: root.tab == 4;
+                            clicked => {
+                                root.tab = 4;
+                            }
+                        }
+
+                        Tab {
+                            label: "About";
+                            icon: @image-url("icons/tendril.svg");
+                            selected: root.tab == 5;
+                            clicked => {
+                                root.tab = 5;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        background: Theme.line;
+                    }
+                }
+
+                // The tab's page.
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    Rectangle {
+                        height: root.bar;
+                    }
+
+                    page := Flickable {
+                        horizontal-stretch: 1;
+                        content-height: max(content.preferred-height, self.height);
+                        content := VerticalLayout {
+                            padding: 28px;
+                            padding-top: root.frameless ? 6px : 24px;
+                            spacing: 18px;
+                            alignment: start;
+                            Text {
+                                text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : "About";
+                                color: Theme.ink;
+                                font-size: 20px;
+                                font-weight: 600;
+                            }
+
+                            if root.tab == 0: VerticalLayout {
+                                spacing: 8px;
+                                padding-bottom: 12px;
+                                GroupTitle {
+                                    text: "Shortcut";
                                 }
 
-                                HorizontalLayout {
-                                    alignment: end;
-                                    spacing: 4px;
-                                    for key in root.shortcut-keys: VerticalLayout {
-                                        alignment: center;
-                                        Keycap {
-                                            label: key;
-                                            strong: true;
-                                            big: true;
+                                Card {
+                                    height: 64px;
+                                    HorizontalLayout {
+                                        padding-left: 16px;
+                                        padding-right: 14px;
+                                        spacing: 12px;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 2px;
+                                            horizontal-stretch: 1;
+                                            Text {
+                                                text: "Open Tendril with";
+                                                color: Theme.ink;
+                                                font-size: 13px;
+                                                font-weight: 500;
+                                            }
+
+                                            Text {
+                                                text: root.recording ? "Press the keys you'd like. Esc stops." : root.shortcut-note;
+                                                color: root.shortcut-ok || root.recording ? Theme.ink-3 : Theme.red;
+                                                font-size: 12px;
+                                                overflow: elide;
+                                            }
                                         }
-                                    }
-                                }
 
-                                VerticalLayout {
-                                    alignment: center;
-                                    Button {
-                                        label: root.recording ? "Stop" : "Change";
-                                        primary: root.recording;
-                                        clicked => {
-                                            if root.recording {
-                                                root.stop-recording();
-                                            } else {
-                                                root.start-recording();
-                                                keys.focus();
+                                        HorizontalLayout {
+                                            alignment: end;
+                                            spacing: 4px;
+                                            for key in root.shortcut-keys: VerticalLayout {
+                                                alignment: center;
+                                                Keycap {
+                                                    label: key;
+                                                    strong: true;
+                                                    big: true;
+                                                }
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Button {
+                                                label: root.recording ? "Stop" : "Change";
+                                                primary: root.recording;
+                                                clicked => {
+                                                    if root.recording {
+                                                        root.stop-recording();
+                                                    } else {
+                                                        root.start-recording();
+                                                        keys.focus();
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
-                    }
 
-                    if root.tab == 0: Groups {
-                        groups: root.general;
-                        chosen(key, index) => {
-                            root.chosen(key, index);
-                        }
-                    }
-
-                    if root.tab == 1: Groups {
-                        groups: root.look;
-                        chosen(key, index) => {
-                            root.chosen(key, index);
-                        }
-                    }
-
-                    if root.tab == 2: Groups {
-                        groups: root.layout;
-                        chosen(key, index) => {
-                            root.chosen(key, index);
-                        }
-                    }
-
-                    if root.tab == 3: VerticalLayout {
-                        spacing: 10px;
-                        Text {
-                            text: "Offered under your results as \"Search Google\" and the like. {query} is what you typed.";
-                            color: Theme.ink-3;
-                            font-size: 12px;
-                            wrap: word-wrap;
-                        }
-
-                        for engine[i] in root.engines: Card {
-                            HorizontalLayout {
-                                padding: 10px;
-                                spacing: 8px;
-                                Field {
-                                    width: 150px;
-                                    text: engine.name;
-                                    placeholder: "Name";
-                                    edited(t) => {
-                                        root.engine-edited(i, "name", t);
-                                    }
-                                }
-
-                                Field {
-                                    horizontal-stretch: 1;
-                                    text: engine.url;
-                                    placeholder: "https://example.com/search?q={query}";
-                                    edited(t) => {
-                                        root.engine-edited(i, "url", t);
-                                    }
-                                }
-
-                                Button {
-                                    label: "Remove";
-                                    clicked => {
-                                        root.engine-remove(i);
-                                    }
-                                }
-                            }
-                        }
-
-                        HorizontalLayout {
-                            alignment: start;
-                            Button {
-                                label: "Add Search Engine";
-                                clicked => {
-                                    root.engine-add();
-                                }
-                            }
-                        }
-                    }
-
-                    if root.tab == 4: VerticalLayout {
-                        spacing: 10px;
-                        Text {
-                            text: "Type the keyword, a space and some text: {query} is that text made safe for a web address, {raw} is it as typed. A link with neither is a bookmark you find by name. Folders work too, like ~/Projects.";
-                            color: Theme.ink-3;
-                            font-size: 12px;
-                            wrap: word-wrap;
-                        }
-
-                        for link[i] in root.links: Card {
-                            HorizontalLayout {
-                                padding: 10px;
-                                spacing: 8px;
-                                Field {
-                                    width: 150px;
-                                    text: link.name;
-                                    placeholder: "Name";
-                                    edited(t) => {
-                                        root.link-edited(i, "name", t);
-                                    }
-                                }
-
-                                Field {
-                                    width: 80px;
-                                    text: link.keyword;
-                                    placeholder: "Keyword";
-                                    edited(t) => {
-                                        root.link-edited(i, "keyword", t);
-                                    }
-                                }
-
-                                Field {
-                                    horizontal-stretch: 1;
-                                    text: link.url;
-                                    placeholder: "https://github.com/{raw}";
-                                    edited(t) => {
-                                        root.link-edited(i, "url", t);
-                                    }
-                                }
-
-                                Button {
-                                    label: "Remove";
-                                    clicked => {
-                                        root.link-remove(i);
-                                    }
-                                }
-                            }
-                        }
-
-                        HorizontalLayout {
-                            alignment: start;
-                            Button {
-                                label: "Add Quicklink";
-                                clicked => {
-                                    root.link-add();
-                                }
-                            }
-                        }
-                    }
-
-                    if root.tab == 5: VerticalLayout {
-                        spacing: 14px;
-                        HorizontalLayout {
-                            spacing: 16px;
-                            alignment: start;
-                            Rectangle {
-                                width: 64px;
-                                height: 64px;
-                                border-radius: 15px;
-                                background: Theme.highlight;
-                                Image {
-                                    width: 38px;
-                                    height: 38px;
-                                    source: @image-url("icons/tendril-solid.svg");
-                                    colorize: #ffffff;
+                            if root.tab == 0: Groups {
+                                groups: root.general;
+                                chosen(key, index) => {
+                                    root.chosen(key, index);
                                 }
                             }
 
-                            VerticalLayout {
-                                alignment: center;
-                                spacing: 4px;
+                            if root.tab == 1: Groups {
+                                groups: root.look;
+                                chosen(key, index) => {
+                                    root.chosen(key, index);
+                                }
+                            }
+
+                            if root.tab == 2: Groups {
+                                groups: root.layout;
+                                chosen(key, index) => {
+                                    root.chosen(key, index);
+                                }
+                            }
+
+                            if root.tab == 3: VerticalLayout {
+                                spacing: 10px;
                                 Text {
-                                    text: "Tendril";
-                                    color: Theme.ink;
-                                    font-size: 18px;
-                                    font-weight: 600;
-                                }
-
-                                Text {
-                                    text: "Version " + root.version;
+                                    text: "Offered under your results as \"Search Google\" and the like. {query} is what you typed.";
                                     color: Theme.ink-3;
                                     font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+
+                                for engine[i] in root.engines: Card {
+                                    HorizontalLayout {
+                                        padding: 10px;
+                                        spacing: 8px;
+                                        Field {
+                                            width: 150px;
+                                            text: engine.name;
+                                            placeholder: "Name";
+                                            edited(t) => {
+                                                root.engine-edited(i, "name", t);
+                                            }
+                                        }
+
+                                        Field {
+                                            horizontal-stretch: 1;
+                                            text: engine.url;
+                                            placeholder: "https://example.com/search?q={query}";
+                                            edited(t) => {
+                                                root.engine-edited(i, "url", t);
+                                            }
+                                        }
+
+                                        Button {
+                                            label: "Remove";
+                                            clicked => {
+                                                root.engine-remove(i);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Button {
+                                        label: "Add Search Engine";
+                                        clicked => {
+                                            root.engine-add();
+                                        }
+                                    }
                                 }
                             }
-                        }
 
-                        Text {
-                            text: "A keyboard launcher. No web views, no tracking. Made by Loam, alongside Blight. GPL-3.0.";
-                            color: Theme.ink-2;
-                            font-size: 13px;
-                            wrap: word-wrap;
-                        }
+                            if root.tab == 4: VerticalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Type the keyword, a space and some text: {query} is that text made safe for a web address, {raw} is it as typed. A link with neither is a bookmark you find by name. Folders work too, like ~/Projects.";
+                                    color: Theme.ink-3;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
 
-                        HorizontalLayout {
-                            alignment: start;
-                            spacing: 8px;
-                            Button {
-                                label: "Check for Updates";
-                                clicked => {
-                                    root.check-updates();
+                                for link[i] in root.links: Card {
+                                    HorizontalLayout {
+                                        padding: 10px;
+                                        spacing: 8px;
+                                        Field {
+                                            width: 150px;
+                                            text: link.name;
+                                            placeholder: "Name";
+                                            edited(t) => {
+                                                root.link-edited(i, "name", t);
+                                            }
+                                        }
+
+                                        Field {
+                                            width: 80px;
+                                            text: link.keyword;
+                                            placeholder: "Keyword";
+                                            edited(t) => {
+                                                root.link-edited(i, "keyword", t);
+                                            }
+                                        }
+
+                                        Field {
+                                            horizontal-stretch: 1;
+                                            text: link.url;
+                                            placeholder: "https://github.com/{raw}";
+                                            edited(t) => {
+                                                root.link-edited(i, "url", t);
+                                            }
+                                        }
+
+                                        Button {
+                                            label: "Remove";
+                                            clicked => {
+                                                root.link-remove(i);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Button {
+                                        label: "Add Quicklink";
+                                        clicked => {
+                                            root.link-add();
+                                        }
+                                    }
                                 }
                             }
 
-                            Button {
-                                label: "Open Settings File";
-                                clicked => {
-                                    root.open-file();
+                            if root.tab == 5: VerticalLayout {
+                                spacing: 14px;
+                                HorizontalLayout {
+                                    spacing: 16px;
+                                    alignment: start;
+                                    Rectangle {
+                                        width: 64px;
+                                        height: 64px;
+                                        border-radius: 15px;
+                                        background: Theme.highlight;
+                                        Image {
+                                            width: 38px;
+                                            height: 38px;
+                                            source: @image-url("icons/tendril-solid.svg");
+                                            colorize: #ffffff;
+                                        }
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 4px;
+                                        Text {
+                                            text: "Tendril";
+                                            color: Theme.ink;
+                                            font-size: 18px;
+                                            font-weight: 600;
+                                        }
+
+                                        Text {
+                                            text: "Version " + root.version;
+                                            color: Theme.ink-3;
+                                            font-size: 12px;
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    text: "A keyboard launcher. No web views, no tracking. Made by Loam, alongside Blight. GPL-3.0.";
+                                    color: Theme.ink-2;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                }
+
+                                HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 8px;
+                                    Button {
+                                        label: "Check for Updates";
+                                        clicked => {
+                                            root.check-updates();
+                                        }
+                                    }
+
+                                    Button {
+                                        label: "Open Settings File";
+                                        clicked => {
+                                            root.open-file();
+                                        }
+                                    }
+                                }
+
+                                if root.update-note != "": Text {
+                                    text: root.update-note;
+                                    color: Theme.ink-3;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
                                 }
                             }
-                        }
-
-                        if root.update-note != "": Text {
-                            text: root.update-note;
-                            color: Theme.ink-3;
-                            font-size: 12px;
-                            wrap: word-wrap;
                         }
                     }
                 }
             }
         }
-    }
 
-    if root.confirm-open: ConfirmDialog {
-        width: root.width;
-        height: root.height;
-        title: root.confirm-title;
-        message: root.confirm-message;
-        label: root.confirm-label;
-        icon: root.confirm-icon;
-        danger: false;
-        answer(yes) => {
-            root.answer(yes);
+        // The title bar, where the system draws none: drag anywhere along the top.
+        if root.frameless: Rectangle {
+            y: 0;
+            height: root.bar;
+            TouchArea {
+                x: 0;
+                width: parent.width - 92px;
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                        root.drag();
+                    }
+                }
+            }
+
+            CaptionButton {
+                x: parent.width - 92px;
+                close: false;
+                clicked => {
+                    root.minimize();
+                }
+            }
+
+            CaptionButton {
+                x: parent.width - 46px;
+                close: true;
+                clicked => {
+                    root.dismiss();
+                }
+            }
+        }
+
+        if root.confirm-open: ConfirmDialog {
+            width: root.width;
+            height: root.height;
+            border-radius: root.corner;
+            title: root.confirm-title;
+            message: root.confirm-message;
+            label: root.confirm-label;
+            icon: root.confirm-icon;
+            danger: false;
+            answer(yes) => {
+                root.answer(yes);
+            }
         }
     }
 }

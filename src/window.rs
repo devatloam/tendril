@@ -14,6 +14,73 @@ use winit::window::{WindowAttributes, WindowLevel};
 thread_local! {
     /// Where the window went last time, so the next one is made there instead of jumping.
     static PLACE: Cell<Option<(i32, i32)>> = const { Cell::new(None) };
+    /// True while a window that isn't the launcher is being made (Settings).
+    static PLAIN: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Makes a window that behaves like any other app's: in the taskbar, not kept on top, a normal
+/// window to tiling window managers. Slint asks `attributes` for every window it makes, and
+/// the window's title isn't set yet when it does, so this is how the two are told apart.
+pub fn plain<T>(make: impl FnOnce() -> T) -> T {
+    PLAIN.set(true);
+    let made = make();
+    PLAIN.set(false);
+    made
+}
+
+/// How the Settings window is framed on this system, as (frameless, corner Slint draws, room
+/// left at the top for the system's buttons).
+///   Windows: Tendril's own frame; Windows 11 rounds it and gives it a shadow.
+///   macOS:   the system's frame with the title bar see-through, buttons inset, as Raycast's.
+///   Linux:   Tendril's own rounded frame where the window can be see-through, the window
+///            manager's frame where it can't (square corners would look worse than either).
+pub fn settings_frame() -> (bool, f32, f32) {
+    if cfg!(windows) {
+        (true, 0.0, 0.0)
+    } else if cfg!(target_os = "macos") {
+        (false, 0.0, 28.0)
+    } else if can_see_through() {
+        (true, 12.0, 0.0)
+    } else {
+        (false, 0.0, 0.0)
+    }
+}
+
+fn plain_attributes(attrs: WindowAttributes) -> WindowAttributes {
+    let attrs = attrs.with_resizable(false);
+    #[cfg(target_os = "linux")]
+    let attrs = {
+        use winit::platform::wayland::WindowAttributesExtWayland;
+        use winit::platform::x11::WindowAttributesExtX11;
+        let attrs = WindowAttributesExtX11::with_name(attrs, "tendril", "Tendril");
+        WindowAttributesExtWayland::with_name(attrs, "tendril", "Tendril")
+    };
+    #[cfg(windows)]
+    let attrs = {
+        use winit::platform::windows::WindowAttributesExtWindows;
+        // Without its frame a window has no shadow on Windows unless asked.
+        attrs.with_undecorated_shadow(true)
+    };
+    #[cfg(target_os = "macos")]
+    let attrs = {
+        use winit::platform::macos::WindowAttributesExtMacOS;
+        attrs.with_titlebar_transparent(true).with_title_hidden(true).with_fullsize_content_view(true)
+    };
+    attrs
+}
+
+/// Asks Windows 11 to round a window's corners (Windows 10 keeps them square).
+#[allow(unused_variables)]
+pub fn round(w: &winit::window::Window) {
+    #[cfg(windows)]
+    {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = w.window_handle()
+            && let RawWindowHandle::Win32(h) = handle.as_raw()
+        {
+            crate::apps::round_corners(h.hwnd.get());
+        }
+    }
 }
 
 /// Whether the renderer in use can draw a see-through window, and whether it's the GPU one.
@@ -54,6 +121,9 @@ pub fn needs_restart(a: &crate::config::Appearance) -> bool {
 const SETTLE: Duration = Duration::from_millis(300);
 
 pub fn attributes(attrs: WindowAttributes) -> WindowAttributes {
+    if PLAIN.get() {
+        return plain_attributes(attrs);
+    }
     let attrs = attrs.with_window_level(WindowLevel::AlwaysOnTop).with_resizable(false);
     #[cfg(target_os = "linux")]
     let attrs = {

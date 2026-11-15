@@ -10,6 +10,7 @@ mod calc;
 mod catalog;
 mod clipboard;
 mod config;
+mod files;
 mod fluent;
 mod hotkey;
 mod icons;
@@ -163,6 +164,7 @@ fn run(start_hidden: bool, appearance: bool, open_settings: bool) -> Result<(), 
     window::watch(&ui);
     app.load_cached_apps();
     app.rescan(false);
+    app.index_files(false);
 
     let hotkeys = hotkey::Hotkeys::new();
     hotkeys.set(&app.config.borrow().hotkey);

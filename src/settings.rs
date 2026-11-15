@@ -18,6 +18,7 @@ type Groups = &'static [(&'static str, &'static [&'static str])];
 const GENERAL: Groups = &[
     ("Starting", &["login", "hide_on_blur"]),
     ("Clipboard and web", &["clipboard_history", "site_icons"]),
+    ("Files", &["index", "hidden", "gitignore"]),
     ("Updates", &["updates", "previews"]),
 ];
 const LOOK: Groups = &[
@@ -90,6 +91,12 @@ pub fn open(tab: i32) {
     });
 }
 
+/// Shows the setting rows as they are now, if the window is open (file search's status changed).
+/// The lists being edited are left alone.
+pub fn refresh() {
+    with_window(|w| choices(w, &config::load()));
+}
+
 fn with_window(f: impl FnOnce(&SettingsWindow)) {
     let w = WINDOW.with_borrow(|slot| slot.as_ref().map(ComponentHandle::clone_strong));
     if let Some(w) = w {
@@ -113,7 +120,25 @@ fn close() {
 /// Everything the window shows, from config.toml as it is now.
 fn fill(w: &SettingsWindow) {
     let config = config::load();
-    let all = appearance::settings(&config);
+    choices(w, &config);
+
+    let keys: Vec<SharedString> = hotkey::keycaps(&config.hotkey).into_iter().map(Into::into).collect();
+    w.set_shortcut_keys(ModelRc::new(VecModel::from(keys)));
+    let mut status = (String::new(), true);
+    with_app(|a| status = a.shortcut_status());
+    w.set_shortcut_note(status.0.into());
+    w.set_shortcut_ok(status.1);
+
+    ENGINES.with_borrow_mut(|e| *e = config.search.clone());
+    LINKS.with_borrow_mut(|l| *l = config.quicklink.clone());
+    show_lists(w);
+    w.set_version(update::VERSION.into());
+    theme(w);
+}
+
+/// The setting rows on the General, Look and Layout tabs.
+fn choices(w: &SettingsWindow, config: &config::Config) {
+    let all = appearance::settings(config);
     let groups = |groups: Groups| -> ModelRc<ChoiceGroup> {
         let made: Vec<ChoiceGroup> = groups
             .iter()
@@ -127,7 +152,7 @@ fn fill(w: &SettingsWindow) {
                         Choice {
                             key: s.key.into(),
                             title: s.title.into(),
-                            about: s.about.into(),
+                            about: s.about.as_str().into(),
                             labels: ModelRc::new(VecModel::from(labels)),
                             current: s.current as i32,
                             toggle,
@@ -142,19 +167,6 @@ fn fill(w: &SettingsWindow) {
     w.set_general(groups(GENERAL));
     w.set_look(groups(LOOK));
     w.set_layout(groups(LAYOUT));
-
-    let keys: Vec<SharedString> = hotkey::keycaps(&config.hotkey).into_iter().map(Into::into).collect();
-    w.set_shortcut_keys(ModelRc::new(VecModel::from(keys)));
-    let mut status = (String::new(), true);
-    with_app(|a| status = a.shortcut_status());
-    w.set_shortcut_note(status.0.into());
-    w.set_shortcut_ok(status.1);
-
-    ENGINES.with_borrow_mut(|e| *e = config.search.clone());
-    LINKS.with_borrow_mut(|l| *l = config.quicklink.clone());
-    show_lists(w);
-    w.set_version(update::VERSION.into());
-    theme(w);
 }
 
 fn show_lists(w: &SettingsWindow) {

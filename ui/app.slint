@@ -141,6 +141,8 @@ export component Launcher inherits Window {
     callback action-run(int);
     callback answer(bool);
     callback escape();
+    // Backspace in an empty field: true if it left a view.
+    callback back() -> bool;
     callback settings();
     callback close-about();
 
@@ -295,6 +297,10 @@ export component Launcher inherits Window {
                 }
                 if e.text == Key.Escape {
                     root.escape();
+                    return accept;
+                }
+                // With nothing typed, Backspace goes back out of a view, like Escape.
+                if e.text == Key.Backspace && root.query == "" && root.back() {
                     return accept;
                 }
                 if e.modifiers.control && e.text == "," {

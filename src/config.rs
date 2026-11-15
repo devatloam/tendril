@@ -24,6 +24,7 @@ pub struct Config {
     /// Fetch quicklinks' sites' own icons.
     pub site_icons: bool,
     pub appearance: Appearance,
+    pub files: Files,
     pub search: Vec<Engine>,
     /// Your own links, [[quicklink]] in the file.
     pub quicklink: Vec<Quicklink>,
@@ -109,6 +110,46 @@ impl Appearance {
     }
 }
 
+/// File search: which folders are looked through, and what's left out.
+#[derive(Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct Files {
+    /// Find files by name as you type.
+    pub index: bool,
+    /// Where to look. Empty means your usual folders: Desktop, Documents, Downloads and the like.
+    pub folders: Vec<String>,
+    /// Only files matching one of these (gitignore-style, like "*.pdf"); empty means every file.
+    pub include: Vec<String>,
+    /// Left out, gitignore-style: "node_modules" anywhere, "*.log", "~/Downloads/old".
+    pub exclude: Vec<String>,
+    /// Left out when the whole path matches one of these regular expressions.
+    pub exclude_regex: Vec<String>,
+    /// Files and folders whose names start with a dot (and Windows' hidden ones).
+    pub hidden: bool,
+    /// Skip what .gitignore and .ignore files list, in any folder that has one.
+    pub gitignore: bool,
+    /// How many folders down to go.
+    pub max_depth: usize,
+    /// Stops there, so a huge folder can't fill memory.
+    pub max_files: usize,
+}
+
+impl Default for Files {
+    fn default() -> Self {
+        Files {
+            index: true,
+            folders: Vec::new(),
+            include: Vec::new(),
+            exclude: vec!["node_modules".into(), "__pycache__".into()],
+            exclude_regex: Vec::new(),
+            hidden: false,
+            gitignore: true,
+            max_depth: 8,
+            max_files: 100_000,
+        }
+    }
+}
+
 /// A link of your own: found by name, or opened with what you type after its keyword.
 #[derive(Deserialize, Clone)]
 pub struct Quicklink {
@@ -146,6 +187,7 @@ impl Default for Config {
             clipboard_history: true,
             site_icons: true,
             appearance: Appearance::default(),
+            files: Files::default(),
             search: vec![
                 Engine { name: "Google".into(), url: "https://www.google.com/search?q={query}".into() },
                 Engine { name: "DuckDuckGo".into(), url: "https://duckduckgo.com/?q={query}".into() },
@@ -226,6 +268,29 @@ favourites = "grid"
 quick_keys = false
 # "Results", "Commands" and the like above each group.
 headings = true
+
+[files]
+# Find files and folders by name as you type. The folders below are looked through when Tendril
+# starts and again when you open it after a while; only names and paths are kept, in memory.
+index = true
+# Where to look. Empty means your usual folders: Desktop, Documents, Downloads, Pictures, Music
+# and Videos. Or list your own: folders = ["~/Documents", "~/Projects", "D:/Work"].
+folders = []
+# Only files matching one of these, like ["*.pdf", "*.docx"]. Empty means every file.
+include = []
+# Left out, written like a .gitignore line: "node_modules" is any file or folder by that name,
+# "*.log" any name ending so, "~/Downloads/old" that one folder.
+exclude = ["node_modules", "__pycache__"]
+# Left out when the whole path matches one of these regular expressions (written with / between
+# folders on every system), like ["/build/", "\\.(tmp|bak)$"].
+exclude_regex = []
+# Names starting with a dot, like .config or .git (and files Windows marks hidden).
+hidden = false
+# Skip what a folder's .gitignore (or .ignore) lists, wherever there is one.
+gitignore = true
+# How many folders down to go, and the most files to keep.
+max_depth = 8
+max_files = 100000
 
 # Offered under your results as "Search <name> for …". {query} is what you typed.
 [[search]]
@@ -447,6 +512,7 @@ mod tests {
         assert_eq!(config.search.len(), default.search.len());
         assert_eq!(config.theme, default.theme);
         assert!(config.appearance == default.appearance);
+        assert_eq!(config.files, default.files);
     }
 
     #[test]

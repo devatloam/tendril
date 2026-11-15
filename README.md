@@ -14,7 +14,7 @@ little else.
 Download the file for your system from [Releases](https://github.com/devatloam/tendril/releases):
 
 - **Linux** (x86_64): `tendril-<version>-linux-x86_64.tar.gz`. Unpack it and run `./install.sh`: it puts Tendril in
-  `~/.local/bin` with a menu entry, and needs no root.
+  `~/.local/bin` with a menu entry, and needs no root. `./install.sh --uninstall` takes it away again.
 - **Windows** (x86_64): `tendril-<version>-windows-x86_64-setup.exe`. It installs for you alone, without asking for
   admin rights, into `%LOCALAPPDATA%\Programs\Tendril`, adds Tendril to the Start menu and to Settings → Apps (to
   uninstall it), and can start it when you sign in. The `.zip` beside it is the same program without an installer.

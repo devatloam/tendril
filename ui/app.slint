@@ -91,6 +91,7 @@ export component Launcher inherits Window {
     in property <string> confirm-message;
     in property <string> confirm-label;
     in property <image> confirm-icon;
+    in property <bool> confirm-danger: true;
 
     in-out property <bool> about-open;
     in property <string> about-detail;
@@ -194,6 +195,15 @@ export component Launcher inherits Window {
                 if root.recording && !root.confirm-open && root.record(e.text, e.modifiers.control, e.modifiers.alt, e.modifiers.shift, e.modifiers.meta) {
                     return accept;
                 }
+                // A question being asked comes first, also during the walkthrough.
+                if root.confirm-open {
+                    if e.text == Key.Escape {
+                        root.answer(false);
+                    } else if e.text == Key.Return {
+                        root.answer(true);
+                    }
+                    return accept;
+                }
                 if root.onboarding {
                     if e.text == Key.Return {
                         root.onboard-next();
@@ -214,14 +224,6 @@ export component Launcher inherits Window {
                 if root.about-open {
                     if e.text == Key.Escape || e.text == Key.Return {
                         root.close-about();
-                    }
-                    return accept;
-                }
-                if root.confirm-open {
-                    if e.text == Key.Escape {
-                        root.answer(false);
-                    } else if e.text == Key.Return {
-                        root.answer(true);
                     }
                     return accept;
                 }
@@ -918,6 +920,7 @@ export component Launcher inherits Window {
                 message: root.confirm-message;
                 label: root.confirm-label;
                 icon: root.confirm-icon;
+                danger: root.confirm-danger;
                 answer(yes) => {
                     root.answer(yes);
                 }

@@ -540,6 +540,8 @@ export component ConfirmDialog inherits Rectangle {
     in property <string> message;
     in property <string> label;
     in property <image> icon;
+    // Red for things that can't be undone (shutting down); otherwise the plain white button.
+    in property <bool> danger: true;
     callback answer(bool);
     background: #00000059;
     TouchArea {
@@ -569,7 +571,7 @@ export component ConfirmDialog inherits Rectangle {
                 alignment: center;
                 RowIcon {
                     source: icon;
-                    tint: 4;
+                    tint: danger ? 4 : 7;
                     size: 40px;
                 }
             }
@@ -629,7 +631,7 @@ export component ConfirmDialog inherits Rectangle {
                     height: 34px;
                     horizontal-stretch: 1;
                     border-radius: 8px;
-                    background: Theme.red.with-alpha(ok-touch.has-hover ? 0.26 : 0.18);
+                    background: danger ? Theme.red.with-alpha(ok-touch.has-hover ? 0.26 : 0.18) : Theme.ink.with-alpha(ok-touch.has-hover ? 1.0 : 0.92);
                     ok-touch := TouchArea {
                         clicked => {
                             root.answer(true);
@@ -641,7 +643,7 @@ export component ConfirmDialog inherits Rectangle {
                         spacing: 8px;
                         Text {
                             text: label;
-                            color: Theme.red;
+                            color: danger ? Theme.red : Theme.bg;
                             font-size: 13px;
                             font-weight: 600;
                             vertical-alignment: center;

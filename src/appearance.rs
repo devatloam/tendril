@@ -30,6 +30,12 @@ impl Setting {
     }
 
     /// Moves to the next (1) or previous (-1) choice, wrapping, and saves it.
+    /// The value one step along, without saving it.
+    pub fn next(&self, delta: i32) -> &Value<'static> {
+        let n = self.choices.len() as i32;
+        &self.choices[(self.current as i32 + delta).rem_euclid(n) as usize].1
+    }
+
     pub fn step(&self, delta: i32) -> std::io::Result<String> {
         let n = self.choices.len() as i32;
         let next = (self.current as i32 + delta).rem_euclid(n) as usize;

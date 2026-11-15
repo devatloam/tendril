@@ -99,12 +99,12 @@ pub fn launch(launch: &Launch) -> io::Result<()> {
     crate::system::spawn("open", &[&launch.bundle.to_string_lossy()])
 }
 
-/// The size closest to 64px from an .icns file, as RGBA.
-pub fn icns(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
+/// The smallest size at least `px` across from an .icns file (or its biggest), as RGBA.
+pub fn icns(path: &Path, px: u32) -> Option<(u32, u32, Vec<u8>)> {
     let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
     let family = icns::IconFamily::read(file).ok()?;
     let mut types = family.available_icons();
-    types.sort_by_key(|t| (t.pixel_width() as i32 - 64).abs());
+    types.sort_by_key(|t| (t.pixel_width() < px, (t.pixel_width() as i64 - px as i64).abs()));
     let image = types.iter().find_map(|t| family.get_icon_with_type(*t).ok())?;
     let image = image.convert_to(icns::PixelFormat::RGBA);
     Some((image.width(), image.height(), image.into_data().into_vec()))

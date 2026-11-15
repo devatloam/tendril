@@ -16,7 +16,9 @@ Download the file for your system from [Releases](https://github.com/devatloam/t
 - **Linux** (x86_64): `tendril-<version>-linux-x86_64.tar.gz`. Unpack it and run `./install.sh`: it puts Tendril in
   `~/.local/bin` with a menu entry, and needs no root.
 - **Windows** (x86_64): `tendril-<version>-windows-x86_64.zip`. Put `tendril.exe` somewhere of your own, like
-  `%LOCALAPPDATA%\Programs\Tendril`, and run it.
+  `%LOCALAPPDATA%\Programs\Tendril`, and run it. Running it again brings up the copy that's already running. If
+  Raycast or PowerToys Run is installed, it probably holds Alt+Space already; Tendril says so when it opens, and the
+  first-run walkthrough asks you for other keys.
 - **macOS**: `tendril-<version>-macos-aarch64.zip` for Apple silicon, `-x86_64` for Intel. Move Tendril.app to
   Applications. It isn't signed yet, so open it the first time with right-click → Open.
 

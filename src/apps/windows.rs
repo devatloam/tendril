@@ -100,13 +100,13 @@ pub fn sleep() -> io::Result<()> {
     if unsafe { SetSuspendState(false, false, false) } { Ok(()) } else { Err(io::Error::last_os_error()) }
 }
 
-/// A shell item's icon at 64px, as premultiplied RGBA.
-pub fn icon(parsing_name: &str) -> Option<(u32, u32, Vec<u8>)> {
+/// A shell item's icon at `px` (or the next size up the shell has), as premultiplied RGBA.
+pub fn icon(parsing_name: &str, px: u32) -> Option<(u32, u32, Vec<u8>)> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let name = HSTRING::from(parsing_name);
         let factory: IShellItemImageFactory = SHCreateItemFromParsingName(&name, None::<&IBindCtx>).ok()?;
-        let bitmap = factory.GetImage(SIZE { cx: 64, cy: 64 }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK).ok()?;
+        let bitmap = factory.GetImage(SIZE { cx: px as i32, cy: px as i32 }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK).ok()?;
         let object = HGDIOBJ(bitmap.0);
         let mut info = BITMAP::default();
         let read = GetObjectW(object, size_of::<BITMAP>() as i32, Some(&mut info as *mut BITMAP as *mut c_void));

@@ -87,20 +87,12 @@ pub fn attributes(attrs: WindowAttributes) -> WindowAttributes {
 pub fn watch(ui: &Launcher) {
     ui.window().on_winit_window_event(|_, event| {
         if let winit::event::WindowEvent::Focused(false) = event {
-            slint::Timer::single_shot(Duration::ZERO, || {
-                with_app(|app| {
-                    let settled = app.shown_at.get().is_some_and(|t| t.elapsed() > SETTLE);
-                    if app.config.borrow().hide_on_blur
-                        && settled
-                        && let Some(ui) = app.ui.upgrade()
-                    {
-                        hide(&ui);
-                    }
-                })
-            });
+            slint::Timer::single_shot(Duration::ZERO, clicked_away);
         }
         EventResult::Propagate
     });
+    #[cfg(windows)]
+    foreground::watch();
     ui.window().on_close_requested(|| {
         with_app(|app| {
             app.closing();
@@ -110,6 +102,46 @@ pub fn watch(ui: &Launcher) {
         });
         slint::CloseRequestResponse::HideWindow
     });
+}
+
+/// Another window took over: close, if that's the setting and Tendril has been open long enough
+/// for this not to be the window manager settling.
+fn clicked_away() {
+    with_app(|app| {
+        let settled = app.shown_at.get().is_some_and(|t| t.elapsed() > SETTLE);
+        if app.config.borrow().hide_on_blur
+            && settled
+            && let Some(ui) = app.ui.upgrade()
+            && ui.window().is_visible()
+        {
+            hide(&ui);
+        }
+    });
+}
+
+/// Windows doesn't always let Tendril's window become the active one when it opens, and a window
+/// that never was active is never told it stopped being. So Windows is also asked to say when
+/// any other app's window comes to the front. It tells this thread, through the message loop
+/// it's already running: nothing polls.
+#[cfg(windows)]
+mod foreground {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
+    use windows::Win32::UI::WindowsAndMessaging::{EVENT_SYSTEM_FOREGROUND, GetWindowThreadProcessId, WINEVENT_OUTOFCONTEXT};
+
+    pub fn watch() {
+        unsafe {
+            SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(changed), 0, 0, WINEVENT_OUTOFCONTEXT);
+        }
+    }
+
+    unsafe extern "system" fn changed(_: HWINEVENTHOOK, _: u32, window: HWND, _: i32, _: i32, _: u32, _: u32) {
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(window, Some(&mut pid)) };
+        if pid != 0 && pid != std::process::id() {
+            slint::Timer::single_shot(std::time::Duration::ZERO, super::clicked_away);
+        }
+    }
 }
 
 pub fn toggle(ui: &Launcher) {
@@ -174,11 +206,25 @@ fn put(w: &winit::window::Window, blur: Option<&str>, dark: bool) {
         w.focus_window();
         #[cfg(windows)]
         {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::{
+                GWL_STYLE, GetWindowLongPtrW, SetForegroundWindow, SetWindowLongPtrW, WS_SYSMENU,
+            };
             use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
             if let Ok(handle) = w.window_handle()
                 && let RawWindowHandle::Win32(h) = handle.as_raw()
             {
                 crate::apps::round_corners(h.hwnd.get());
+                let hwnd = HWND(h.hwnd.get() as *mut _);
+                unsafe {
+                    // No window menu: otherwise Alt+Space opens it instead of reaching Tendril,
+                    // and that's the shortcut people most often want.
+                    let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+                    SetWindowLongPtrW(hwnd, GWL_STYLE, style & !(WS_SYSMENU.0 as isize));
+                    // The hotkey (or the Tendril that was started again) gave us the right to come
+                    // to the front; winit's focus doesn't always use it.
+                    let _ = SetForegroundWindow(hwnd);
+                }
             }
         }
     }

@@ -89,6 +89,8 @@ pub struct App {
     shown_actions: RefCell<Vec<usize>>,
     action_rows: Rc<VecModel<ActionRow>>,
     pending: RefCell<Option<Item>>,
+    /// A setting change waiting for "Turn On" in the GPU dialog: its key and direction.
+    pending_setting: Cell<Option<(&'static str, i32)>>,
     toast_timer: Timer,
     scanned_at: Cell<Option<Instant>>,
     scanning: Cell<bool>,
@@ -160,6 +162,7 @@ impl App {
             shown_actions: RefCell::default(),
             action_rows,
             pending: RefCell::default(),
+            pending_setting: Cell::new(None),
             toast_timer: Timer::default(),
             scanned_at: Cell::new(None),
             scanning: Cell::new(false),
@@ -357,8 +360,10 @@ impl App {
         if let Some(hotkeys) = &*self.hotkeys.borrow() {
             hotkeys.set(&self.config.borrow().hotkey);
         }
+        let refused = self.hotkeys.borrow().as_ref().and_then(|h| h.refused());
         self.apply_theme();
         self.apply_appearance();
+        self.icons.borrow_mut().set_scale(ui.window().scale_factor());
         self.pointer.set(None);
         let stale = self.hidden_at.get().is_none_or(|t| t.elapsed() > KEEP_QUERY);
         if stale {
@@ -379,6 +384,15 @@ impl App {
             return;
         }
         self.refresh(&ui.get_query());
+        if let Some(keys) = refused {
+            self.toast(
+                &format!(
+                    "Another app uses {}, so it can't open Tendril. Search for Appearance to pick other keys.",
+                    keys.replace('+', " ")
+                ),
+                true,
+            );
+        }
     }
 
     pub fn start_onboarding(&self) {
@@ -399,6 +413,9 @@ impl App {
                 "Your shortcut",
                 "Wayland doesn't let apps take keys for themselves. In your desktop's keyboard settings, add a shortcut that runs tendril toggle.",
             ),
+            1 if self.hotkeys.borrow().as_ref().and_then(|h| h.refused()).is_some() => {
+                ("Your shortcut", "Another app already uses those keys (Raycast or PowerToys, often). Press the keys you'd like instead.")
+            }
             1 => ("Your shortcut", "Press the keys you'd like to open Tendril with, from anywhere. Enter keeps what's there."),
             2 => ("How it looks", "Changes show straight away, behind this."),
             3 => ("How it's laid out", "What you see before you type, and as you do."),
@@ -487,6 +504,7 @@ impl App {
         ui.set_confirm_open(false);
         ui.set_about_open(false);
         self.pending.take();
+        self.pending_setting.take();
     }
 
     /// Looks for installed apps on a background thread; the list updates when it's done.
@@ -532,6 +550,33 @@ impl App {
                     }
                 })
             });
+        }
+    }
+
+    /// Icons the icon thread finished: the rows showing them get them, without rebuilding the list.
+    pub fn icons_arrived(&self, batch: Vec<crate::icons::Pixels>) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let arrived = self.icons.borrow_mut().arrived(batch);
+        let items = self.items.borrow();
+        for (i, item) in items.iter().enumerate() {
+            let (Some(item), Some(mut row)) = (item, self.rows.row_data(i)) else { continue };
+            let points = if row.kind == 4 { crate::icons::TILE } else { crate::icons::ROW };
+            let Some(key) = self.icons.borrow().key(&item.icon, points) else { continue };
+            if arrived.contains(&key) {
+                let (icon, icon_on, tint) = self.icons.borrow_mut().get(&item.icon, item.tint, points);
+                row.icon = icon;
+                row.icon_on = icon_on;
+                row.tint = tint;
+                self.rows.set_row_data(i, row);
+            }
+        }
+        drop(items);
+        let selected = self.selected_item();
+        if self.config.borrow().appearance.details
+            && let Some(item) = selected
+            && self.icons.borrow().key(&item.icon, crate::icons::DETAIL).is_some_and(|k| arrived.contains(&k))
+        {
+            ui.set_detail(self.detail(&item));
         }
     }
 
@@ -858,7 +903,7 @@ impl App {
         let mut y = if headings { 0.0 } else { 8.0 };
         let mut groups = 0;
         let row_for = |item: &Item, kind: i32, x: f32, y: f32, width: f32, height: f32, icons: &mut Icons| {
-            let (icon, icon_on, tint) = icons.get(&item.icon, item.tint);
+            let (icon, icon_on, tint) = icons.get(&item.icon, item.tint, if kind == 4 { crate::icons::TILE } else { crate::icons::ROW });
             let accessory = match (&item.run, item.kind) {
                 // A setting's current value travels in `keywords` (see appearance_lines).
                 (Run::Setting(_), _) | (_, Kind::Calculator) => item.keywords.as_str(),
@@ -1119,8 +1164,13 @@ impl App {
             if let Some(hotkeys) = &*self.hotkeys.borrow() {
                 if recording {
                     hotkeys.pause();
-                    let note = if hotkeys.available() { "Press the new keys" } else { "Set this in your desktop's keyboard settings" };
-                    self.show_shortcut(ui, note, true);
+                    let refused = hotkeys.refused().is_some();
+                    let note = match () {
+                        _ if !hotkeys.available() => "Set this in your desktop's keyboard settings",
+                        _ if refused => "Another app uses these keys. Press the ones you'd like instead",
+                        _ => "Press the new keys",
+                    };
+                    self.show_shortcut(ui, note, !refused);
                 } else {
                     hotkeys.resume();
                 }
@@ -1134,7 +1184,7 @@ impl App {
 
     /// What the details pane shows for an item.
     fn detail(&self, item: &Item) -> Detail {
-        let (icon, _, tint) = self.icons.borrow_mut().get(&item.icon, item.tint);
+        let (icon, _, tint) = self.icons.borrow_mut().get(&item.icon, item.tint, crate::icons::DETAIL);
         let mut facts = Vec::new();
         let mut fact = |label: &str, value: String| facts.push(Fact { label: label.into(), value: value.into() });
         match &item.run {
@@ -1229,7 +1279,41 @@ impl App {
         (0..rows.row_count()).filter(|&i| rows.row_data(i).is_some_and(|r| r.kind == 4)).collect()
     }
 
+    /// Changes a setting, asking first when the change would switch Tendril to drawing with the
+    /// GPU (Modern style, or blur where only the GPU can see through).
     fn change_setting(&self, key: &'static str, delta: i32) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let before = self.config.borrow().appearance.clone();
+        let mut after = before.clone();
+        let next = appearance::settings(&self.config.borrow()).into_iter().find(|s| s.key == key).map(|s| s.next(delta).clone());
+        match (key, next) {
+            ("style", Some(config::Value::Text(v))) => after.style = v.to_string(),
+            ("blur", Some(config::Value::Bool(v))) => after.blur = v,
+            _ => {}
+        }
+        if window::wants_gpu(&after) && !window::wants_gpu(&before) && !window::is_gpu() {
+            let what = if key == "style" { "The Modern style" } else { "Blur, on this system," };
+            ui.set_confirm_title("Draw with the GPU?".into());
+            ui.set_confirm_message(
+                format!(
+                    "{what} needs Tendril to draw with your graphics card. That keeps more memory and power in use \
+                     for as long as Tendril runs. If your computer feels slower afterwards, turn this back off. \
+                     Tendril restarts to switch."
+                )
+                .into(),
+            );
+            ui.set_confirm_label("Turn On".into());
+            ui.set_confirm_danger(false);
+            ui.set_confirm_icon(self.icons.borrow_mut().builtin_solid(if key == "style" { "sparkle" } else { "blur" }));
+            self.pending_setting.set(Some((key, delta)));
+            ui.set_actions_open(false);
+            ui.set_confirm_open(true);
+            return;
+        }
+        self.apply_setting(key, delta);
+    }
+
+    fn apply_setting(&self, key: &'static str, delta: i32) {
         let Some(ui) = self.ui.upgrade() else { return };
         let before = self.config.borrow().clone();
         let Some(setting) = appearance::settings(&before).into_iter().find(|s| s.key == key) else { return };
@@ -1357,6 +1441,7 @@ impl App {
             ui.set_confirm_title(title.into());
             ui.set_confirm_message(message.into());
             ui.set_confirm_label(label.into());
+            ui.set_confirm_danger(true);
             ui.set_confirm_icon(self.icons.borrow_mut().builtin_solid(match &item.icon {
                 crate::catalog::Icon::Builtin(name) => name,
                 _ => "power",
@@ -1514,6 +1599,12 @@ impl App {
     fn answer(&self, yes: bool) {
         let Some(ui) = self.ui.upgrade() else { return };
         ui.set_confirm_open(false);
+        if let Some((key, delta)) = self.pending_setting.take() {
+            if yes {
+                self.apply_setting(key, delta);
+            }
+            return;
+        }
         let pending = self.pending.take();
         if let (true, Some(item)) = (yes, pending) {
             self.usage.borrow_mut().record(&item.id, &ui.get_query());

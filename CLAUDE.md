@@ -37,7 +37,12 @@ Windows and macOS can be checked from Linux: `rustup target add x86_64-pc-window
   The CPU renderer can't rotate elements; turned shapes are paths (see `Shape` in motion.slint).
 - **The CPU renderer is the default.** The GPU one (femtovg) is only for blur where X11 isn't available, because it
   holds tens of megabytes more for as long as Tendril runs.
-- **Icons are loaded when a row first shows them** and scaled to 64px before they're kept.
+- **Icons never load on the UI thread** unless they're vectors (SVG, Tendril's glyphs). PNG/ICO/icns files and Windows
+  shell icons go to the icon thread (icons.rs), are scaled there with Lanczos to the exact pixels they're shown at
+  (`icons::ROW`/`TILE`/`DETAIL` times the window's scale), and patched into the rows when they arrive. The CPU renderer
+  doesn't smooth scaled images, so an icon drawn at any other size looks ragged. On Windows each shell icon can take
+  tens of milliseconds; loading them inline is what made typing stall.
+- **Anything that switches to the GPU renderer asks first** (`change_setting`), with the neutral confirm dialog.
 - **New dependencies need a reason.** Prefer what's already in the tree (x11rb, windows, image).
 - **Gradients with more than two stops** leave a gap in the CPU renderer: build them from two-stop pieces
   (`Spectrum` in motion.slint).

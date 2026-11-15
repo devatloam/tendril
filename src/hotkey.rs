@@ -23,13 +23,16 @@ pub struct Hotkeys {
     backend: Option<Backend>,
     current: RefCell<Option<String>>,
     paused: std::cell::Cell<bool>,
+    /// The keys config.toml asks for, when another app holds them (Alt+Space often is, by
+    /// Raycast or PowerToys Run on Windows).
+    refused: RefCell<Option<String>>,
 }
 
 impl Hotkeys {
     pub fn new() -> Hotkeys {
         let backend =
             Backend::new().map_err(|e| eprintln!("tendril: no global hotkey here ({e}); bind `tendril toggle` to a key instead")).ok();
-        Hotkeys { backend, current: RefCell::new(None), paused: std::cell::Cell::new(false) }
+        Hotkeys { backend, current: RefCell::new(None), paused: std::cell::Cell::new(false), refused: RefCell::new(None) }
     }
 
     /// Whether there's a global key to take here at all (not on Wayland).
@@ -40,12 +43,21 @@ impl Hotkeys {
     /// Takes `text` ("Alt+Space"), letting go of the previous keys if they changed. A broken
     /// setting is reported once, not on every open.
     pub fn set(&self, text: &str) {
-        if self.current.borrow().as_deref() == Some(text) {
+        if self.current.borrow().as_deref() == Some(text) || self.refused.borrow().as_deref() == Some(text) {
             return;
         }
-        if let Err(e) = self.change(text) {
-            eprintln!("tendril: couldn't take {text} ({e})");
+        match self.change(text) {
+            Ok(()) => *self.refused.borrow_mut() = None,
+            Err(e) => {
+                eprintln!("tendril: couldn't take {text} ({e})");
+                *self.refused.borrow_mut() = Some(text.to_string());
+            }
         }
+    }
+
+    /// The keys that were asked for but another app holds, so they don't open Tendril.
+    pub fn refused(&self) -> Option<String> {
+        self.refused.borrow().clone()
     }
 
     /// Takes `text` now, saying why not if it can't; the keys held before are kept then.
@@ -58,6 +70,9 @@ impl Hotkeys {
         let taken = backend.set(hotkey);
         if taken.is_ok() && self.paused.get() {
             backend.clear();
+        }
+        if taken.is_ok() {
+            *self.refused.borrow_mut() = None;
         }
         if let Err(e) = taken {
             // Put the old keys back.
@@ -124,6 +139,8 @@ fn key_name(text: &str) -> Option<String> {
     }
     Some(match c {
         'a'..='z' | 'A'..='Z' => format!("Key{}", c.to_ascii_uppercase()),
+        // Ctrl and a letter can arrive as the old control character for it (Ctrl+A is 1).
+        '\u{1}'..='\u{1a}' => format!("Key{}", (b'A' + c as u8 - 1) as char),
         '0'..='9' => format!("Digit{c}"),
         ' ' => "Space".into(),
         ',' => "Comma".into(),

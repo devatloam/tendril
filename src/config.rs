@@ -247,9 +247,23 @@ url = "https://github.com/{raw}"
 
 /// The commented file, with this system's own default blur style.
 fn template() -> String {
+    template_for(default_blur_style(), Appearance::default().blur)
+}
+
+/// The file with this system's defaults filled in. Whole lines only: `blur = true` is also the
+/// end of `hide_on_blur = true`, and replacing that too turned closing on click-away off for
+/// everyone on Windows and macOS in 0.1.0 and 0.1.1.
+fn template_for(blur_style: &str, blur: bool) -> String {
     TEMPLATE
-        .replace("blur_style = \"acrylic\"", &format!("blur_style = \"{}\"", default_blur_style()))
-        .replace("blur = true", &format!("blur = {}", Appearance::default().blur))
+        .lines()
+        .map(|line| match line {
+            "blur_style = \"acrylic\"" => format!("blur_style = \"{blur_style}\""),
+            "blur = true" => format!("blur = {blur}"),
+            other => other.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
 }
 
 pub fn path() -> PathBuf {
@@ -261,10 +275,14 @@ pub fn path() -> PathBuf {
 pub fn load() -> Config {
     let path = path();
     match std::fs::read_to_string(&path) {
-        Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("tendril: {} has a mistake, using the defaults: {e}", path.display());
-            Config::default()
-        }),
+        Ok(text) => {
+            let mut config = toml::from_str(&text).unwrap_or_else(|e| {
+                eprintln!("tendril: {} has a mistake, using the defaults: {e}", path.display());
+                Config::default()
+            });
+            undo_click_away_bug(&mut config);
+            config
+        }
         Err(_) => {
             if let Some(dir) = path.parent() {
                 let _ = std::fs::create_dir_all(dir);
@@ -272,6 +290,26 @@ pub fn load() -> Config {
             let _ = std::fs::write(&path, template());
             Config::default()
         }
+    }
+}
+
+/// 0.1.0 and 0.1.1 wrote `hide_on_blur = false` into every new config.toml where blur starts
+/// off (Windows, macOS, Wayland); see `template_for`. Turned back on once, then left to you.
+fn undo_click_away_bug(config: &mut Config) {
+    if Appearance::default().blur {
+        return;
+    }
+    let marker = dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("tendril").join("click-away-fixed");
+    if marker.exists() {
+        return;
+    }
+    if let Some(dir) = marker.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if std::fs::write(&marker, b"").is_ok() && !config.hide_on_blur {
+        config.hide_on_blur = true;
+        let _ = set(None, "hide_on_blur", Value::Bool(true));
+        eprintln!("tendril: turned closing on click-away back on (an earlier version turned it off by mistake)");
     }
 }
 
@@ -345,6 +383,16 @@ mod tests {
         assert_eq!(config.search.len(), default.search.len());
         assert_eq!(config.theme, default.theme);
         assert!(config.appearance == default.appearance);
+    }
+
+    #[test]
+    fn blur_off_leaves_click_away_on() {
+        for blur in [true, false] {
+            let config: Config = toml::from_str(&template_for("mica", blur)).unwrap();
+            assert!(config.hide_on_blur, "closing on click-away stays on with blur {blur}");
+            assert_eq!(config.appearance.blur, blur);
+            assert_eq!(config.appearance.blur_style, "mica");
+        }
     }
 
     #[test]

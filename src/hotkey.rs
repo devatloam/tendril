@@ -139,8 +139,6 @@ fn key_name(text: &str) -> Option<String> {
     }
     Some(match c {
         'a'..='z' | 'A'..='Z' => format!("Key{}", c.to_ascii_uppercase()),
-        // Ctrl and a letter can arrive as the old control character for it (Ctrl+A is 1).
-        '\u{1}'..='\u{1a}' => format!("Key{}", (b'A' + c as u8 - 1) as char),
         '0'..='9' => format!("Digit{c}"),
         ' ' => "Space".into(),
         ',' => "Comma".into(),
@@ -393,6 +391,11 @@ mod tests {
         assert_eq!(shortcut("\u{F70B}", false, false, false, false).as_deref(), Some("F8"));
         assert_eq!(shortcut("k", false, false, false, false), None, "a plain letter is typing, not a shortcut");
         assert_eq!(shortcut("k", false, false, true, false), None);
+        // Slint reports a modifier pressed on its own as a key of its own (Shift is U+10, Control
+        // U+11, Alt U+12, Meta U+17): those are the start of a shortcut, never one by themselves.
+        for alone in ["\u{10}", "\u{11}", "\u{12}", "\u{17}"] {
+            assert_eq!(shortcut(alone, true, true, true, true), None, "{alone:?} on its own");
+        }
         if !cfg!(target_os = "macos") {
             assert_eq!(keycaps("Ctrl+Shift+KeyK"), ["Ctrl", "Shift", "K"]);
             assert_eq!(keycaps("Alt+Space"), ["Alt", "Space"]);

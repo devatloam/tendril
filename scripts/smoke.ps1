@@ -112,7 +112,7 @@ foreach ($c in $text.ToCharArray()) { Keys ([string]$c); Start-Sleep -Millisecon
 $typed = $sw.ElapsedMilliseconds
 Shot "05a-right-after-typing"
 $caught = WaitFor { (FieldText) -eq $text } 5000
-Note "typing: sent '$text' in $typed ms; field caught up $caught ms after the last key (-1 = never; field reads '$(FieldText)')"
+Note "typing: sent '$text' in $typed ms; UI Automation read it all $caught ms after the last key (slow to read: compare 05a-right-after-typing.png)"
 Shot "05-typed"
 Start-Sleep -Milliseconds 800
 Shot "06-typed-later"
@@ -153,5 +153,6 @@ Keys "{ESC}"; Start-Sleep -Milliseconds 200; Keys "{ESC}"; Start-Sleep -Seconds 
 Note "memory closed: $(Memory)"
 $log = Join-Path $env:LOCALAPPDATA "tendril\tendril.log"
 if (Test-Path $log) { Copy-Item $log $Out }
+if (Test-Path $config) { Copy-Item $config $Out }
 Get-Process tendril -ErrorAction SilentlyContinue | Stop-Process
 Note "done"

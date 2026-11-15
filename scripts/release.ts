@@ -286,7 +286,12 @@ function bump(how: string | undefined, push: boolean, dry: boolean) {
     git("push", "--atomic", "origin", "HEAD", tag);
     console.log(`\nPushed ${tag}. The release workflow builds and publishes it.`);
   } else {
-    console.log(`\nTagged ${tag}. Publish it with:\n  git push --atomic origin HEAD ${tag}`);
+    console.log(
+      `\nTagged ${tag}. Publish it with:\n  git push --atomic origin HEAD ${tag}\n` +
+        `Or, where tags can't be pushed (cloud sessions): delete the tag (git tag -d ${tag}), push main, and run\n` +
+        `  gh workflow run release.yml --ref main\n` +
+        `which makes the tag on GitHub.`,
+    );
   }
 }
 

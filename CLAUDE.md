@@ -73,6 +73,8 @@ There's no window manager, so give the window keyboard focus yourself (python-xl
 
 - `bun run bump patch|minor|major [--push]` (scripts/release.ts) sets Cargo.toml and Cargo.lock, commits
   "Release vX.Y.Z" and tags it. The tag starts `.github/workflows/release.yml`. Don't edit the version by hand.
+  Cloud sessions can't push tags (the git proxy answers 403): push the bump commit to main instead and dispatch the
+  Release workflow on main (GitHub tools, `actions_run_trigger`); it makes the tag itself.
 - Every push to main that passes `check.yml` is published as a nightly prerelease, `vX.Y.Z-nightly.<date>.<run>`, where
   X.Y.Z is the next patch after the last release. CI passes the version in `TENDRIL_VERSION`; use `update::VERSION`,
   never `CARGO_PKG_VERSION`. `build.yml` does the building and packaging for both.

@@ -1,13 +1,27 @@
 name: Release
 
-# `bun run bump patch|minor|major --push` sets the version, commits, and pushes a tag like v0.2.0,
-# which starts this. It builds every system (build.yml), writes the notes and publishes the
-# release that Tendril's updater offers. Nightlies are published by check.yml instead.
+# Two ways in, both ending with the same release:
+# - Push a tag like v0.2.0 (`bun run bump minor --push`).
+# - Or run this workflow on main ("Run workflow" in the Actions tab, `gh workflow run release.yml`,
+#   or a cloud session's GitHub tools) after `bun run bump minor` has pushed the version change.
+#   The tag is then made here, for setups that can push branches but not tags.
+# It builds every system (build.yml), writes the notes and publishes the release Tendril's
+# updater offers. Nightlies are published by check.yml instead.
 on:
   push:
     tags:
       - "v*.*.*"
       - "!v*-*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version to release, like 0.2.0. Must be the one in Cargo.toml; leave empty to use it."
+        required: false
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -17,14 +31,30 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
       - id: version
-        name: The tag matches Cargo.toml
+        name: The version matches Cargo.toml
+        env:
+          WANTED: ${{ inputs.version }}
         run: |
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml's $version. Use bun run bump."; exit 1; }
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::Release from main."; exit 1; }
+            wanted=${WANTED#v}; wanted=${wanted:-$version}
+            [ "$wanted" = "$version" ] || { echo "::error::Cargo.toml on main says $version, not $wanted. Run bun run bump and push it first."; exit 1; }
+            case "$version" in *-*) echo "::error::$version is a preview; those come from check.yml."; exit 1;; esac
+            if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+              echo "::error::v$version is already released. Bump the version first."; exit 1
+            fi
+            tag="v$version"
+          else
+            tag=$GITHUB_REF_NAME
+            [ "v$version" = "$tag" ] || { echo "::error::Tag $tag doesn't match Cargo.toml's $version. Use bun run bump."; exit 1; }
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   build:
     needs: verify
@@ -40,6 +70,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.verify.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -54,9 +85,10 @@ jobs:
         run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
       - name: Release notes
         run: |
-          bun scripts/release.ts notes --tag "$GITHUB_REF_NAME" --ref "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --output notes.md
+          bun scripts/release.ts notes --tag "$TAG" --ref "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --output notes.md
           cat notes.md >> "$GITHUB_STEP_SUMMARY"
+      # When run by hand the tag doesn't exist yet, and is made at the commit that was built.
       - name: Publish
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest \
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --latest \
             --title "Tendril ${{ needs.verify.outputs.version }}" --notes-file notes.md

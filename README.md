@@ -225,7 +225,9 @@ bun run bump minor --push      # 0.1.4 → 0.2.0: sets Cargo.toml and Cargo.lock
 
 `bump` takes `patch`, `minor`, `major` or an exact version like `1.0.0`. Without `--push` it commits and tags locally and
 prints the push command. The tag starts `release.yml`, which builds every system and publishes the release the updater
-offers. Nightlies need nothing: `check.yml` publishes one after every push to main that passes its checks.
+offers. Where tags can't be pushed (Claude's cloud sessions refuse them), push the bump commit to main and run the
+Release workflow instead, from the Actions tab or with `gh workflow run release.yml --ref main`: it checks the version
+in Cargo.toml and makes the tag itself. Nightlies need nothing: `check.yml` publishes one after every push to main that passes its checks.
 
 Release notes follow T3 Code's: a header with the number of changes and contributors, a bullet for each change worth
 reading about (up to seven, with the first sentence of the commit message's prose), a count of what's left

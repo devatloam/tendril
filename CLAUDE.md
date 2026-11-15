@@ -31,6 +31,9 @@ Windows and macOS can be checked from Linux: `rustup target add x86_64-pc-window
 - `ui/settings.slint` + `src/settings.rs`: the Settings window, made when opened and dropped when closed. Its rows come
   from `appearance::settings`, the same list the launcher's Appearance view uses; changes go through
   `App::apply_setting`, so both behave the same (GPU question, restart).
+  On Windows it follows Windows 11's design (Fluent): `Look` in settings.slint holds Windows' greys and your accent
+  (read from the registry), and every control has a Fluent form behind `Look.fluent`. `TENDRIL_FLUENT=1` shows it on
+  Linux, to work on it without Windows.
   It's made inside `window::plain`, so it doesn't get the launcher's window attributes (on top, out of the taskbar),
   and draws its own frame and title bar where `window::settings_frame` says the system's would look out of place.
 - README.md says what each of the other files is for.

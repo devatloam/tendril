@@ -43,7 +43,8 @@ made by Loam alongside [Blight](https://github.com/bluejutzu/blight).
 - **Your icons, in their colours.** Apps, files and sites keep their own icons; Tendril draws only its own commands.
 - **The keyboard all the way.** Ctrl K lists what you can do with anything; quick keys open the first nine rows.
 - **Made to look at.** See-through with blur, eight palettes from Blight, Flat or Modern, compact or with details.
-- **A Settings window**, and the same settings in the launcher itself for when your hands are on the keys.
+- **A Settings window**, in Windows 11's own design on Windows (its colours, your accent, Segoe UI), and the same
+  settings in the launcher itself for when your hands are on the keys.
 - **Keeps itself up to date**, checked against the release's checksum, with nightly previews if you want them early.
 
 ## Installing
@@ -87,8 +88,8 @@ kept, about ten days' worth.
 | ![Inkscape selected, its details beside the list](docs/details.webp) | ![The actions for GIMP](docs/actions.webp) | ![2^10 * 3 + 7 = 3,079](docs/calculator.webp) |
 | **Clipboard history** | **Files and folders** | **Quicklinks** |
 | ![What you've copied, newest first](docs/clipboard.webp) | ![The home folder, listed as you type ~/](docs/files.webp) | ![gh devatloam/tendril opens that repository](docs/quicklink.webp) |
-| **Settings** | **Settings: Appearance** | **Appearance, from the launcher** |
-| ![The Settings window's General tab](docs/settings.webp) | ![The Settings window's Appearance tab](docs/settings-appearance.webp) | ![The Appearance view in the launcher](docs/appearance.webp) |
+| **Settings** | **Settings on Windows**, in its design | **Appearance, from the launcher** |
+| ![The Settings window's General tab](docs/settings.webp) | ![The Settings window in Windows 11's design](docs/settings-windows.webp) | ![The Appearance view in the launcher](docs/appearance.webp) |
 | **Compact, with quick keys** | **Paper, a light palette** | **The first run** |
 | ![Compact size with quick keys](docs/compact.webp) | ![The Paper palette](docs/light.webp) | ![Welcome to Tendril](docs/welcome.webp) |
 

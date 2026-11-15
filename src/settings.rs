@@ -4,7 +4,7 @@
 //! launcher's Appearance view applies them.
 
 use crate::app::with_app;
-use crate::{Choice, ChoiceGroup, Entry, SettingsWindow, Theme, appearance, config, hotkey, palettes, system, update};
+use crate::{Choice, ChoiceGroup, Entry, Look, SettingsWindow, Theme, appearance, config, hotkey, palettes, system, update};
 use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
@@ -80,6 +80,10 @@ pub fn open(tab: i32) {
                     winit.set_outer_position(slint::winit_030::winit::dpi::PhysicalPosition::new(x, y));
                 }
                 crate::window::round(&winit);
+                #[cfg(windows)]
+                if w.global::<Look>().get_mica() {
+                    let _ = window_vibrancy::apply_mica(&*winit, Some(w.global::<Theme>().get_dark()));
+                }
                 winit.focus_window();
             }
         });
@@ -177,6 +181,75 @@ fn theme(w: &SettingsWindow) {
     palettes::apply(&t, palette);
     t.set_blue_selection(flags.0);
     t.set_bold_icons(flags.1);
+    if fluent() {
+        windows_look(w, &t);
+    }
+}
+
+/// Whether Settings follows Windows' design (Fluent). On Windows; TENDRIL_FLUENT=1 shows it
+/// elsewhere, to work on it without Windows.
+fn fluent() -> bool {
+    cfg!(windows) || std::env::var_os("TENDRIL_FLUENT").is_some()
+}
+
+/// Windows 11's look: its neutral greys in place of the palette's (this window's Theme is its own,
+/// so the launcher keeps the palette), and the accent picked in Windows' settings.
+fn windows_look(w: &SettingsWindow, t: &Theme) {
+    let look = w.global::<Look>();
+    look.set_fluent(true);
+    // Mica needs a see-through window, which only the GPU renderer draws on Windows.
+    look.set_mica(cfg!(windows) && crate::window::is_gpu());
+    if let Some((on_dark, on_light)) = accent() {
+        look.set_accent_on_dark(on_dark);
+        look.set_accent_on_light(on_light);
+    }
+    let rgb = |v: u32| slint::Color::from_rgb_u8((v >> 16) as u8, (v >> 8) as u8, v as u8);
+    let dark = t.get_dark();
+    let [sunken, bg, raised, line, ink, ink2, ink3] = if dark {
+        [0x1c1c1c, 0x202020, 0x2d2d2d, 0x383838, 0xffffff, 0xcfcfcf, 0x9d9d9d]
+    } else {
+        [0xebebeb, 0xf3f3f3, 0xfbfbfb, 0xe0e0e0, 0x1b1b1b, 0x5d5d5d, 0x8a8a8a]
+    };
+    t.set_sunken(rgb(sunken));
+    t.set_bg(rgb(bg));
+    t.set_panel(rgb(bg));
+    t.set_raised(rgb(raised));
+    t.set_line(rgb(line));
+    t.set_ink(rgb(ink));
+    t.set_ink_2(rgb(ink2));
+    t.set_ink_3(rgb(ink3));
+    t.set_blue(if dark { look.get_accent_on_dark() } else { look.get_accent_on_light() });
+}
+
+/// The accent you picked in Windows, as the two shades Windows itself uses for controls: a light
+/// one shown on dark, a dark one shown on light (the palette's Light 2 and Dark 1).
+#[cfg(windows)]
+fn accent() -> Option<(slint::Color, slint::Color)> {
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RegGetValueW};
+    use windows::core::w;
+    let mut palette = [0u8; 32];
+    let mut size = palette.len() as u32;
+    unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent"),
+            w!("AccentPalette"),
+            RRF_RT_REG_BINARY,
+            None,
+            Some(palette.as_mut_ptr().cast()),
+            Some(&mut size),
+        )
+        .ok()
+        .ok()?;
+    }
+    // Eight colours, four bytes each (red, green, blue, unused), lightest first.
+    let shade = |i: usize| slint::Color::from_rgb_u8(palette[i * 4], palette[i * 4 + 1], palette[i * 4 + 2]);
+    Some((shade(1), shade(4)))
+}
+
+#[cfg(not(windows))]
+fn accent() -> Option<(slint::Color, slint::Color)> {
+    None
 }
 
 fn wire(w: &SettingsWindow) {

@@ -17,7 +17,11 @@ export global Theme {
     in property <color> violet: #a99bd6;
     in property <bool> dark: true;
 
-    // Tint numbers, as Rust sends them: 0 means a real icon, drawn as it is.
+    // Blue leads, as on Blight's dashboard: selection, the highlighted row's icon, Flint's mark.
+    // White carries everything else; other colours only where they mean something.
+    out property <color> highlight: blue;
+
+    // Tint numbers, as Rust sends them: 0 means a real icon, drawn as it is; 7 is plain white.
     public pure function tint(n: int) -> color {
         if n == 1 { return accent; }
         if n == 2 { return blue; }
@@ -25,7 +29,7 @@ export global Theme {
         if n == 4 { return red; }
         if n == 5 { return amber; }
         if n == 6 { return violet; }
-        return ink-2;
+        return ink;
     }
 
     // How things move, as on the Blight dashboard: arrive with settle, leave fast.

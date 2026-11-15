@@ -105,7 +105,7 @@ export component Tumble {
     Thrown {
         x: 0;
         kind: 0;
-        colour: Theme.accent;
+        colour: Theme.ink;
         size: size;
         f: f(0);
         still: mode == 1;
@@ -124,7 +124,7 @@ export component Tumble {
     Thrown {
         x: (size + gap) * 2;
         kind: 2;
-        colour: Theme.green;
+        colour: Theme.ink;
         size: size;
         f: f(240);
         still: mode == 1;
@@ -151,7 +151,7 @@ component Blob inherits Rectangle {
     background: @radial-gradient(circle, colour.with-alpha(strength) 0%, colour.with-alpha(strength * 0.5) 30%, colour.with-alpha(0) 66%);
 }
 
-// Clay, blue and green drifting behind whatever sits on top, as behind Blight's loading card.
+// Blue and white drifting behind whatever sits on top, as behind Blight's loading card.
 export component Glow inherits Rectangle {
     in property <bool> moving: true;
     in property <float> strength: Theme.dark ? 0.16 : 0.22;
@@ -159,7 +159,7 @@ export component Glow inherits Rectangle {
     property <float> t: moving ? animation-tick() / 1ms : 0;
     clip: true;
     Blob {
-        colour: Theme.accent;
+        colour: Theme.blue;
         strength: strength;
         t: t;
         start: 0;
@@ -177,13 +177,40 @@ export component Glow inherits Rectangle {
         home-y: parent.height / 2 - across * 0.04;
     }
     Blob {
-        colour: Theme.green;
-        strength: strength;
+        colour: Theme.ink;
+        strength: strength * 0.55;
         t: t;
         start: 1.33;
         across: across;
         home-x: parent.width / 2 - across * 0.04;
         home-y: parent.height / 2 + across * 0.3;
+    }
+}
+
+// White into blue and back, fading in at the left and out at the right. Four
+// two-colour pieces end to end: the CPU renderer leaves a gap in a gradient of more stops.
+export component Spectrum inherits Rectangle {
+    in property <float> strength: 1;
+    property <length> piece: self.width / 4;
+    Rectangle {
+        x: 0;
+        width: piece;
+        background: @linear-gradient(90deg, Theme.blue.with-alpha(0) 0%, Theme.blue.with-alpha(strength) 100%);
+    }
+    Rectangle {
+        x: piece;
+        width: piece;
+        background: @linear-gradient(90deg, Theme.blue.with-alpha(strength) 0%, Theme.ink.with-alpha(strength) 100%);
+    }
+    Rectangle {
+        x: piece * 2;
+        width: piece;
+        background: @linear-gradient(90deg, Theme.ink.with-alpha(strength) 0%, Theme.blue.with-alpha(strength) 100%);
+    }
+    Rectangle {
+        x: piece * 3;
+        width: piece;
+        background: @linear-gradient(90deg, Theme.blue.with-alpha(strength) 0%, Theme.blue.with-alpha(0) 100%);
     }
 }
 
@@ -198,31 +225,8 @@ export component Sweep inherits Rectangle {
     property <float> eased: 1 - (1 - u) * (1 - u) * (1 - u);
     height: 2px;
     clip: true;
-    // Four two-colour pieces end to end: the CPU renderer draws a gradient with more stops
-    // than two with a gap in it.
-    Rectangle {
+    Spectrum {
         width: parent.width * 0.35;
         x: self.width * (-1 + 4 * eased);
-        property <length> piece: self.width / 4;
-        Rectangle {
-            x: 0;
-            width: piece;
-            background: @linear-gradient(90deg, Theme.accent.with-alpha(0) 0%, Theme.accent 100%);
-        }
-        Rectangle {
-            x: piece;
-            width: piece;
-            background: @linear-gradient(90deg, Theme.accent 0%, Theme.blue 100%);
-        }
-        Rectangle {
-            x: piece * 2;
-            width: piece;
-            background: @linear-gradient(90deg, Theme.blue 0%, Theme.green 100%);
-        }
-        Rectangle {
-            x: piece * 3;
-            width: piece;
-            background: @linear-gradient(90deg, Theme.green 0%, Theme.green.with-alpha(0) 100%);
-        }
     }
 }

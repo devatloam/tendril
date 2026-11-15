@@ -29,7 +29,7 @@ struct Pick {
 
 const MAX_PICKS: usize = 500;
 
-fn now() -> u64 {
+pub fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
@@ -87,6 +87,11 @@ impl Usage {
             0.2
         };
         u.count as f64 * weight
+    }
+
+    /// How many times, and when last (seconds since 1970), something was opened from Flint.
+    pub fn stats(&self, id: &str) -> Option<(u32, u64)> {
+        self.items.get(id).map(|u| (u.count, u.last))
     }
 
     /// Points added to a match's score.

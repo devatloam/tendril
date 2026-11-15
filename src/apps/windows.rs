@@ -79,6 +79,11 @@ unsafe fn display(item: &IShellItem, kind: SIGDN) -> Option<String> {
     }
 }
 
+/// What launching it opens, for the details pane.
+pub fn describe(launch: &Launch) -> Option<String> {
+    Some(launch.target.clone())
+}
+
 pub fn launch(launch: &Launch) -> io::Result<()> {
     shell_open(&launch.target)
 }

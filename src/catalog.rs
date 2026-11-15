@@ -44,6 +44,14 @@ pub enum Run {
     Settings,
     Reload,
     About,
+    /// The Appearance view.
+    Appearance,
+    /// One setting in the Appearance view, by its config key.
+    Setting(&'static str),
+    /// The row that records the shortcut that opens Flint.
+    Shortcut,
+    /// The first-run walkthrough, again.
+    Onboarding,
     Quit,
 }
 
@@ -86,6 +94,9 @@ impl Item {
             Run::Copy(_) => "Copy Answer",
             Run::Url(_) if self.kind == Kind::Fallback => "Open in Browser",
             Run::Url(_) => "Open",
+            Run::Setting(_) => "Change",
+            Run::Shortcut => "Press New Keys",
+            Run::Appearance => "Open",
             _ => "Run Command",
         }
     }
@@ -93,14 +104,16 @@ impl Item {
 
 pub fn commands() -> Vec<Item> {
     let mut items = vec![
-        Item::command("lock", "Lock Screen", "lock away", "lock", 2, Run::Power(Power::Lock)),
-        Item::command("sleep", "Sleep", "suspend", "moon", 6, Run::Power(Power::Sleep)),
-        Item::command("logout", "Log Out", "sign out logoff", "logout", 5, Run::Power(Power::LogOut)),
-        Item::command("restart", "Restart", "reboot", "restart", 5, Run::Power(Power::Restart)),
+        Item::command("lock", "Lock Screen", "lock away", "lock", 7, Run::Power(Power::Lock)),
+        Item::command("sleep", "Sleep", "suspend", "moon", 7, Run::Power(Power::Sleep)),
+        Item::command("logout", "Log Out", "sign out logoff", "logout", 7, Run::Power(Power::LogOut)),
+        Item::command("restart", "Restart", "reboot", "restart", 7, Run::Power(Power::Restart)),
         Item::command("shutdown", "Shut Down", "power off poweroff turn off", "power", 4, Run::Power(Power::ShutDown)),
         Item::command("settings", "Flint Settings", "preferences config hotkey", "settings", 7, Run::Settings),
-        Item::command("reload", "Reload Apps", "refresh rescan", "refresh", 3, Run::Reload),
-        Item::command("about", "About Flint", "version info", "bolt", 1, Run::About),
+        Item::command("reload", "Reload Apps", "refresh rescan", "refresh", 7, Run::Reload),
+        Item::command("appearance", "Appearance", "settings look theme blur glow compact details grid keys", "palette", 7, Run::Appearance),
+        Item::command("setup", "Set Up Flint", "onboarding welcome walkthrough shortcut hotkey", "wave", 7, Run::Onboarding),
+        Item::command("about", "About Flint", "version info", "bolt", 7, Run::About),
         Item::command("quit", "Quit Flint", "exit close", "quit", 7, Run::Quit),
     ];
     for p in crate::palettes::PALETTES {
@@ -108,8 +121,8 @@ pub fn commands() -> Vec<Item> {
             &format!("theme:{}", p.key),
             &format!("{} Theme", p.name),
             "theme palette colours colors appearance",
-            "palette",
-            1,
+            "swatch",
+            7,
             Run::Theme(p.key),
         );
         item.subtitle = p.note.into();

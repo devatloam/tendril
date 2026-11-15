@@ -10,8 +10,12 @@ use nucleo_matcher::{Matcher, Utf32Str};
 pub enum Line {
     Section(String),
     Item(Item),
-    /// Nothing matched: said over the shapes at rest, above the web searches.
+    /// Nothing matched: said over the shapes, above the web searches.
     Empty(String),
+    /// What you use most, shown before you type, as tiles or a list.
+    Favourites(Vec<Item>),
+    /// A big welcome, with the shapes: the walkthrough's first and last steps.
+    Hero(String, String),
 }
 
 const MAX_RESULTS: usize = 40;
@@ -33,7 +37,7 @@ pub fn lines(query: &str, catalog: &[Item], usage: &Usage, engines: &[Engine], m
             keywords: "Answer".into(),
             kind: Kind::Calculator,
             icon: Icon::Builtin("calculator"),
-            tint: 5,
+            tint: 7,
             run: Run::Copy(answer.plain),
             path: None,
         }));
@@ -64,14 +68,13 @@ fn root(catalog: &[Item], usage: &Usage) -> Vec<Line> {
     let mut lines = Vec::new();
     let top: Vec<&Item> = usage.top(SUGGESTIONS).into_iter().filter_map(|id| catalog.iter().find(|i| i.id == id)).collect();
     if !top.is_empty() {
-        lines.push(Line::Section("Suggestions".into()));
-        lines.extend(top.iter().map(|i| Line::Item((*i).clone())));
+        lines.push(Line::Favourites(top.iter().map(|i| (*i).clone()).collect()));
     }
     lines.push(Line::Section("Commands".into()));
     lines.extend(
         catalog
             .iter()
-            .filter(|i| i.kind == Kind::Command && !matches!(i.run, Run::Theme(_)))
+            .filter(|i| i.kind == Kind::Command && !matches!(i.run, Run::Theme(_) | Run::Setting(_)))
             .filter(|i| !top.iter().any(|t| t.id == i.id))
             .map(|i| Line::Item(i.clone())),
     );

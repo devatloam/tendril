@@ -1,20 +1,44 @@
 import { Theme } from "theme.slint";
 
 export struct Row {
-    // 0 is a section heading, 1 an item, 2 the calculator.
+    // 0 a section heading, 1 an item, 2 the calculator, 3 "nothing found",
+    // 4 a favourite's tile, 5 a setting in the Appearance view.
     kind: int,
+    x: length,
     y: length,
+    // 0 means the list's full width.
+    width: length,
     height: length,
     title: string,
     subtitle: string,
     accessory: string,
     icon: image,
+    // The solid, for when it's selected.
+    icon-on: image,
     tint: int,
+    // Its Ctrl+number, when quick keys are on.
+    quick: string,
+}
+
+export struct Fact {
+    label: string,
+    value: string,
+}
+
+// What the details pane shows for the selected item.
+export struct Detail {
+    icon: image,
+    tint: int,
+    title: string,
+    subtitle: string,
+    kind: string,
+    facts: [Fact],
 }
 
 export struct ActionRow {
     title: string,
     icon: image,
+    icon-on: image,
     keys: [string],
     danger: bool,
 }
@@ -22,17 +46,21 @@ export struct ActionRow {
 export component Keycap inherits Rectangle {
     in property <string> label;
     in property <bool> strong;
-    height: 20px;
-    min-width: 20px;
-    border-radius: 5px;
+    // Shown large, for the shortcut itself.
+    in property <bool> big;
+    height: big ? 30px : 20px;
+    min-width: big ? 30px : 20px;
+    border-radius: big ? 7px : 5px;
     background: Theme.ink.with-alpha(strong ? 0.14 : 0.09);
+    border-width: big ? 1px : 0;
+    border-color: Theme.ink.with-alpha(0.12);
     HorizontalLayout {
-        padding-left: 5px;
-        padding-right: 5px;
+        padding-left: big ? 10px : 5px;
+        padding-right: big ? 10px : 5px;
         Text {
             text: label;
             color: strong ? Theme.ink : Theme.ink-2;
-            font-size: 11px;
+            font-size: big ? 14px : 11px;
             font-weight: 500;
             vertical-alignment: center;
             horizontal-alignment: center;
@@ -40,22 +68,34 @@ export component Keycap inherits Rectangle {
     }
 }
 
-// An app's own icon, or a glyph on a tinted square so a list reads by shape and colour first.
+// An app's own icon, or a glyph on a square so a list reads by shape first. The square is lit
+// from above, a little brighter at the top, with a faint edge. Plain ones are white on a white
+// wash; on the selected row they turn blue, like everything that's highlighted.
 export component RowIcon inherits Rectangle {
     in property <image> source;
     in property <int> tint;
+    in property <bool> on;
     in property <length> size: 20px;
+    property <bool> plain: tint == 7;
+    property <color> c: plain && on ? Theme.highlight : Theme.tint(tint);
+    property <float> wash: plain && !on ? (Theme.dark ? 0.1 : 0.07) : on ? (Theme.dark ? 0.9 : 0.85) : (Theme.dark ? 0.3 : 0.22);
     width: size;
     height: size;
     border-radius: tint == 0 ? 0 : size * 0.26;
-    background: tint == 0 ? transparent : Theme.tint(tint).with-alpha(Theme.dark ? 0.2 : 0.16);
+    background: tint == 0 ? transparent : @linear-gradient(180deg, c.with-alpha(wash) 0%, c.with-alpha(wash * 0.6) 100%);
+    border-width: tint == 0 ? 0 : 1px;
+    border-color: on && tint != 0 ? #ffffff.with-alpha(0.18) : c.with-alpha(Theme.dark ? 0.16 : 0.18);
+    animate background {
+        duration: 150ms;
+        easing: cubic-bezier(0.2, 0, 0, 1);
+    }
     Image {
-        width: tint == 0 ? parent.width : parent.width * 0.7;
+        width: tint == 0 ? parent.width : parent.width * 0.68;
         height: self.width;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         source: source;
-        colorize: tint == 0 ? transparent : Theme.tint(tint);
+        colorize: tint == 0 ? transparent : on ? #ffffff : plain ? Theme.ink.with-alpha(0.85) : c;
         image-fit: contain;
     }
 }
@@ -75,6 +115,9 @@ export component SectionRow inherits Rectangle {
 export component ItemRow inherits Rectangle {
     in property <Row> data;
     in property <bool> selected;
+    in property <string> mod-key;
+    // Compact windows have no bar along the bottom, so the selected row says what Enter does.
+    in property <string> hint;
     HorizontalLayout {
         padding-left: 12px;
         padding-right: 14px;
@@ -82,8 +125,9 @@ export component ItemRow inherits Rectangle {
         VerticalLayout {
             alignment: center;
             RowIcon {
-                source: data.icon;
+                source: selected ? data.icon-on : data.icon;
                 tint: data.tint;
+                on: selected;
             }
         }
 
@@ -108,11 +152,175 @@ export component ItemRow inherits Rectangle {
             }
         }
 
-        Text {
+        if selected && hint != "": HorizontalLayout {
+            spacing: 6px;
+            Text {
+                text: hint;
+                color: Theme.ink-2;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Keycap {
+                    label: "↵";
+                }
+            }
+        }
+        // A setting's value, with the arrows that change it.
+        if data.kind == 5: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                height: 26px;
+                border-radius: 6px;
+                background: selected ? Theme.highlight.with-alpha(Theme.dark ? 0.3 : 0.2) : Theme.ink.with-alpha(0.06);
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 8px;
+                    Text {
+                        text: "‹";
+                        color: selected ? Theme.ink-2 : Theme.ink-3.with-alpha(0.5);
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: data.accessory;
+                        color: Theme.ink;
+                        font-size: 13px;
+                        font-weight: 500;
+                        vertical-alignment: center;
+                        min-width: 64px;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "›";
+                        color: selected ? Theme.ink-2 : Theme.ink-3.with-alpha(0.5);
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        if data.kind != 5 && data.quick != "" && !(selected && hint != ""): HorizontalLayout {
+            spacing: 3px;
+            alignment: center;
+            VerticalLayout {
+                alignment: center;
+                Keycap {
+                    label: mod-key;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Keycap {
+                    label: data.quick;
+                }
+            }
+        }
+        if data.kind != 5 && data.quick == "" && !(selected && hint != ""): Text {
             text: data.accessory;
             color: selected ? Theme.ink-2 : Theme.ink-3;
             font-size: 13px;
             vertical-alignment: center;
+        }
+    }
+}
+
+// One of your most used, as a big tile: the icon over its name.
+export component TileCell inherits Rectangle {
+    in property <Row> data;
+    in property <bool> selected;
+    VerticalLayout {
+        alignment: center;
+        spacing: 8px;
+        padding: 6px;
+        HorizontalLayout {
+            alignment: center;
+            RowIcon {
+                source: selected ? data.icon-on : data.icon;
+                tint: data.tint;
+                on: selected;
+                size: 40px;
+            }
+        }
+
+        Text {
+            text: data.title;
+            color: selected ? Theme.ink : Theme.ink-2;
+            font-size: 12px;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+// The selected item, at length: a big icon, what it is, and what Flint knows about it.
+export component DetailPane inherits Rectangle {
+    in property <Detail> detail;
+    VerticalLayout {
+        padding: 22px;
+        spacing: 6px;
+        alignment: start;
+        HorizontalLayout {
+            alignment: start;
+            RowIcon {
+                source: detail.icon;
+                tint: detail.tint;
+                size: 56px;
+            }
+        }
+
+        Rectangle {
+            height: 8px;
+        }
+
+        Text {
+            text: detail.title;
+            color: Theme.ink;
+            font-size: 19px;
+            font-weight: 600;
+            wrap: word-wrap;
+        }
+
+        Text {
+            text: detail.subtitle != "" ? detail.subtitle : detail.kind;
+            color: Theme.ink-2;
+            font-size: 13px;
+            wrap: word-wrap;
+        }
+
+        Rectangle {
+            height: 14px;
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.line;
+            }
+        }
+
+        Rectangle {
+            height: 4px;
+        }
+
+        for fact in detail.facts: HorizontalLayout {
+            spacing: 12px;
+            Text {
+                text: fact.label;
+                color: Theme.ink-3;
+                font-size: 12px;
+                width: 92px;
+            }
+
+            Text {
+                text: fact.value;
+                color: Theme.ink-2;
+                font-size: 12px;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
         }
     }
 }
@@ -231,7 +439,7 @@ export component ActionPanel inherits Rectangle {
             y: i * row-height;
             height: row-height;
             border-radius: 7px;
-            background: i == selected ? Theme.raised : transparent;
+            background: i == selected ? Theme.highlight.with-alpha(Theme.dark ? 0.22 : 0.14) : transparent;
             TouchArea {
                 pointer-event(e) => {
                     if e.kind == PointerEventKind.move && i != selected {
@@ -252,8 +460,8 @@ export component ActionPanel inherits Rectangle {
                     Image {
                         width: 16px;
                         height: 16px;
-                        source: action.icon;
-                        colorize: action.danger ? Theme.red : Theme.ink-2;
+                        source: i == selected ? action.icon-on : action.icon;
+                        colorize: action.danger ? Theme.red : i == selected ? Theme.ink : Theme.ink-2;
                     }
                 }
 

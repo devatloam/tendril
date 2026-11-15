@@ -239,6 +239,12 @@ fn terminal() -> Option<Vec<String>> {
     })
 }
 
+/// What launching it runs, for the details pane.
+pub fn describe(launch: &Launch) -> Option<String> {
+    let runs = launch.argv.join(" ");
+    Some(if launch.terminal { format!("{runs} (in a terminal)") } else { runs })
+}
+
 pub fn launch(launch: &Launch) -> io::Result<()> {
     let mut argv = launch.argv.clone();
     if launch.terminal {

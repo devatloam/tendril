@@ -5,12 +5,13 @@ use crate::config::{self, Config};
 use crate::icons::Icons;
 use crate::search::{self, Line};
 use crate::usage::Usage;
-use crate::{ActionRow, Launcher, Row, Theme, apps, palettes, system, window};
+use crate::{ActionRow, Detail, Fact, Launcher, Row, Theme, appearance, apps, palettes, system, window};
 use nucleo_matcher::Matcher;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, VecModel};
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 thread_local! {
@@ -31,8 +32,18 @@ const KEEP_QUERY: Duration = Duration::from_secs(90);
 const RESCAN_AFTER: Duration = Duration::from_secs(120);
 /// The least time the "looking for apps" shapes stay up.
 const MIN_BUSY: Duration = Duration::from_millis(900);
-/// How long after opening a hover is taken to be the pointer already being there.
-const POINTER_SETTLE: Duration = Duration::from_millis(400);
+
+/// Set when Flint should start itself again after quitting (main.rs does it): a setting changed
+/// that needs a different renderer.
+pub static RESTART: AtomicBool = AtomicBool::new(false);
+/// Whether the next Flint opens on the Appearance view.
+pub static RESTART_TO_APPEARANCE: AtomicBool = AtomicBool::new(false);
+
+/// The walkthrough's steps: welcome, shortcut, look, layout, done.
+const STEPS: usize = 5;
+
+const TILE_HEIGHT: f32 = 92.0;
+const TILE_GAP: f32 = 8.0;
 
 pub struct App {
     pub ui: slint::Weak<Launcher>,
@@ -56,6 +67,18 @@ pub struct App {
     pub hidden_at: Cell<Option<Instant>>,
     pub shown_at: Cell<Option<Instant>>,
     hotkeys: RefCell<Option<crate::hotkey::Hotkeys>>,
+    /// Showing the Appearance view instead of search results.
+    in_appearance: Cell<bool>,
+    /// Where the pointer was at the last hover. Rows rebuilt or scrolled under a still pointer,
+    /// a window opening under it, or focus arriving, all report a hover; only a pointer that
+    /// has moved since should take the selection.
+    pointer: Cell<Option<(f32, f32)>>,
+    /// The first-run walkthrough's step, while it's showing.
+    onboarding: Cell<Option<usize>>,
+    /// Blur changed during the walkthrough on a system where that needs a restart: done at the end.
+    restart_after_onboarding: Cell<bool>,
+    /// For each Ctrl+number, the row it opens.
+    quick: RefCell<Vec<usize>>,
 }
 
 /// Something the actions panel can do with the selected item.
@@ -94,10 +117,16 @@ impl App {
             hidden_at: Cell::new(None),
             shown_at: Cell::new(None),
             hotkeys: RefCell::new(None),
+            in_appearance: Cell::new(false),
+            pointer: Cell::new(None),
+            onboarding: Cell::new(None),
+            restart_after_onboarding: Cell::new(false),
+            quick: RefCell::default(),
         });
         APP.with_borrow_mut(|a| *a = Some(app.clone()));
         app.wire(ui);
         app.apply_theme();
+        app.apply_appearance();
         app.set_context(ui);
         app
     }
@@ -106,7 +135,7 @@ impl App {
         ui.set_mod_key(if cfg!(target_os = "macos") { "⌘".into() } else { "Ctrl".into() });
         ui.on_query_edited(|q| with_app(|a| a.refresh(&q)));
         ui.on_move(|d| with_app(|a| a.move_by(d)));
-        ui.on_hover(|i| with_app(|a| a.select(i, true)));
+        ui.on_hover(|i, x, y| with_app(|a| a.hover(i, x, y)));
         ui.on_activate(|i, alt| with_app(|a| a.activate(i, alt)));
         ui.on_escape(|| with_app(|a| a.escape()));
         ui.on_toggle_actions(|| with_app(|a| a.toggle_actions()));
@@ -117,6 +146,19 @@ impl App {
         ui.on_answer(|yes| with_app(|a| a.answer(yes)));
         ui.on_settings(|| with_app(|a| a.run(&settings_item(), false)));
         ui.on_scheme_changed(|| with_app(|a| a.apply_theme()));
+        ui.on_nudge(|d| with_app(|a| a.step(d)));
+        ui.on_onboard_next(|| with_app(|a| a.onboard(1)));
+        ui.on_onboard_back(|| with_app(|a| a.onboard(-1)));
+        ui.on_record(|text, control, alt, shift, meta| {
+            let mut taken = false;
+            with_app(|a| taken = a.record(&text, control, alt, shift, meta));
+            taken
+        });
+        ui.on_quick(|key| {
+            let mut opened = false;
+            with_app(|a| opened = a.quick_open(&key));
+            opened
+        });
         ui.on_close_about(|| {
             with_app(|a| {
                 if let Some(ui) = a.ui.upgrade() {
@@ -143,10 +185,45 @@ impl App {
         palettes::apply(&ui.global::<Theme>(), palette);
     }
 
+    /// The window's look, from [appearance] in config.toml.
+    pub fn apply_appearance(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let a = self.config.borrow().appearance.clone();
+        ui.set_see_through(a.blur && window::can_see_through());
+        ui.set_panel_opacity(a.opacity());
+        ui.set_glow_mode(a.glow_mode());
+        ui.set_gradient_divider(a.gradient_divider);
+        let walkthrough = self.onboarding.get().is_some();
+        ui.set_compact(a.compact() && !walkthrough);
+        ui.set_details(a.details && !walkthrough);
+        // Windows 11 and macOS round the window themselves.
+        ui.set_corner(if cfg!(any(windows, target_os = "macos")) { 0.0 } else { 12.0 });
+        self.show_shortcut(&ui, "Press the new keys", true);
+    }
+
     fn set_context(&self, ui: &Launcher) {
-        ui.set_context_icon(self.icons.borrow_mut().builtin("bolt"));
-        ui.set_context_tint(1);
-        ui.set_context_title("Flint".into());
+        let appearance = self.in_appearance.get();
+        ui.set_context_icon(self.icons.borrow_mut().builtin_solid(if appearance { "palette" } else { "bolt" }));
+        // Blue: Flint's one colour, as blue leads on Blight's dashboard.
+        ui.set_context_tint(2);
+        ui.set_context_title(if appearance { "Appearance" } else { "Flint" }.into());
+        ui.set_placeholder(if appearance { "Search settings…" } else { "Search for apps and commands…" }.into());
+    }
+
+    /// Opens the Appearance view, as the "Appearance" command and `flint --appearance` do.
+    pub fn open_appearance(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        self.in_appearance.set(true);
+        ui.set_query(SharedString::new());
+        self.set_context(&ui);
+        self.refresh("");
+    }
+
+    fn leave_appearance(&self, ui: &Launcher) {
+        self.in_appearance.set(false);
+        ui.set_query(SharedString::new());
+        self.set_context(ui);
+        self.refresh("");
     }
 
     /// Called when the window is about to open.
@@ -157,19 +234,117 @@ impl App {
             hotkeys.set(&self.config.borrow().hotkey);
         }
         self.apply_theme();
+        self.apply_appearance();
+        self.pointer.set(None);
         let stale = self.hidden_at.get().is_none_or(|t| t.elapsed() > KEEP_QUERY);
         if stale {
             ui.set_query(SharedString::new());
+            self.in_appearance.set(false);
+            self.set_context(&ui);
         }
         if self.scanned_at.get().is_none_or(|t| t.elapsed() > RESCAN_AFTER) {
             self.rescan(false);
         }
         self.close_overlays(&ui);
+        if !self.config.borrow().onboarded && self.onboarding.get().is_none() {
+            self.start_onboarding();
+            return;
+        }
         self.refresh(&ui.get_query());
     }
 
+    pub fn start_onboarding(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        self.in_appearance.set(false);
+        ui.set_query(SharedString::new());
+        self.show_step(0);
+    }
+
+    fn show_step(&self, step: usize) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        self.onboarding.set(Some(step));
+        self.apply_appearance();
+        let wayland = !self.hotkeys.borrow().as_ref().is_some_and(|h| h.available());
+        let (title, body) = match step {
+            0 => ("Welcome to Flint", "Let's set it up. It takes a minute, and all of it can be changed later."),
+            1 if wayland => (
+                "Your shortcut",
+                "Wayland doesn't let apps take keys for themselves. In your desktop's keyboard settings, add a shortcut that runs flint toggle.",
+            ),
+            1 => ("Your shortcut", "Press the keys you'd like to open Flint with, from anywhere. Enter keeps what's there."),
+            2 => ("How it looks", "Changes show straight away, behind this."),
+            3 => ("How it's laid out", "What you see before you type, and as you do."),
+            _ => ("You're set", "Search for Appearance whenever you'd like to change something."),
+        };
+        ui.set_onboarding(true);
+        ui.set_step(step as i32);
+        ui.set_steps(STEPS as i32);
+        ui.set_step_title(title.into());
+        ui.set_step_body(body.into());
+        self.refresh("");
+    }
+
+    /// Continue (1) or back (-1). Back from the first step skips the walkthrough.
+    fn onboard(&self, delta: i32) {
+        let Some(step) = self.onboarding.get() else { return };
+        let next = step as i32 + delta;
+        if next < 0 || next as usize >= STEPS {
+            self.finish_onboarding();
+        } else {
+            self.show_step(next as usize);
+        }
+    }
+
+    fn finish_onboarding(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let _ = config::set(None, "onboarded", config::Value::Bool(true));
+        *self.config.borrow_mut() = config::load();
+        self.onboarding.set(None);
+        ui.set_onboarding(false);
+        self.apply_appearance();
+        self.set_context(&ui);
+        self.refresh("");
+        if self.restart_after_onboarding.replace(false) {
+            self.toast("Restarting to change how Flint draws…", false);
+            RESTART.store(true, Ordering::SeqCst);
+            Timer::single_shot(Duration::from_millis(700), || {
+                let _ = slint::quit_event_loop();
+            });
+        }
+    }
+
+    /// A key press while the shortcut row is selected: the new shortcut, if it is one.
+    fn record(&self, text: &str, control: bool, alt: bool, shift: bool, meta: bool) -> bool {
+        let Some(combo) = crate::hotkey::shortcut(text, control, alt, shift, meta) else { return false };
+        let Some(ui) = self.ui.upgrade() else { return true };
+        let taken = self.hotkeys.borrow().as_ref().map(|h| h.change(&combo));
+        match taken {
+            Some(Ok(())) => match config::set(None, "hotkey", config::Value::Text(&combo)) {
+                Ok(()) => {
+                    self.config.borrow_mut().hotkey = combo;
+                    self.show_shortcut(&ui, "Saved. Press other keys to change it again.", true);
+                }
+                Err(e) => self.show_shortcut(&ui, &format!("Couldn't save it: {e}"), false),
+            },
+            Some(Err(e)) => self.show_shortcut(&ui, &format!("Not those: {e}."), false),
+            None => {}
+        }
+        true
+    }
+
+    fn show_shortcut(&self, ui: &Launcher, note: &str, ok: bool) {
+        let keys: Vec<SharedString> = crate::hotkey::keycaps(&self.config.borrow().hotkey).into_iter().map(Into::into).collect();
+        ui.set_shortcut_keys(ModelRc::new(VecModel::from(keys)));
+        ui.set_shortcut_note(note.into());
+        ui.set_shortcut_ok(ok);
+    }
+
     pub fn closing(&self) {
+        if let Some(hotkeys) = &*self.hotkeys.borrow() {
+            hotkeys.resume();
+        }
         if let Some(ui) = self.ui.upgrade() {
+            ui.set_recording(false);
             self.close_overlays(&ui);
             ui.set_toast(SharedString::new());
         }
@@ -232,23 +407,84 @@ impl App {
     }
 
     pub fn refresh(&self, query: &str) {
+        self.refresh_keeping(query, None);
+    }
+
+    /// Rebuilds the list. `keep` is a row id to stay on, if it's still there.
+    fn refresh_keeping(&self, query: &str, keep: Option<&str>) {
         let Some(ui) = self.ui.upgrade() else { return };
-        let lines = search::lines(
-            query,
-            &self.catalog.borrow(),
-            &self.usage.borrow(),
-            &self.config.borrow().search,
-            &mut self.matcher.borrow_mut(),
-        );
+        let config = self.config.borrow().clone();
+        let a = &config.appearance;
+        let walkthrough = self.onboarding.get();
+        let lines = if let Some(step) = walkthrough {
+            self.onboarding_lines(step, &config)
+        } else if self.in_appearance.get() {
+            self.appearance_lines(query, &config)
+        } else {
+            search::lines(query, &self.catalog.borrow(), &self.usage.borrow(), &config.search, &mut self.matcher.borrow_mut())
+        };
+        let compact = a.compact() && walkthrough.is_none();
+        let details = a.details && !compact && walkthrough.is_none();
+        let headings = a.headings || walkthrough.is_some();
+        let list_width = if compact {
+            620.0
+        } else if details {
+            300.0
+        } else {
+            750.0
+        } - 16.0;
+        let columns = if compact {
+            5
+        } else if details {
+            3
+        } else {
+            6
+        };
         let mut icons = self.icons.borrow_mut();
         let mut rows = Vec::with_capacity(lines.len());
         let mut items = Vec::with_capacity(lines.len());
-        let mut y = 0.0;
+        let mut y = if headings { 0.0 } else { 8.0 };
+        let mut groups = 0;
+        let row_for = |item: &Item, kind: i32, x: f32, y: f32, width: f32, height: f32, icons: &mut Icons| {
+            let (icon, icon_on, tint) = icons.get(&item.icon, item.tint);
+            let accessory = match (&item.run, item.kind) {
+                // A setting's current value travels in `keywords` (see appearance_lines).
+                (Run::Setting(_), _) | (_, Kind::Calculator) => item.keywords.as_str(),
+                // The details pane says what it is; the narrow list doesn't need to.
+                _ if details => "",
+                (_, kind) => kind.label(),
+            };
+            Row {
+                kind,
+                x,
+                y,
+                width,
+                height,
+                title: item.title.as_str().into(),
+                subtitle: item.subtitle.as_str().into(),
+                accessory: accessory.into(),
+                icon,
+                icon_on,
+                tint,
+                quick: SharedString::new(),
+            }
+        };
         for line in lines {
             match line {
                 Line::Section(title) => {
-                    let height = if y == 0.0 { 30.0 } else { 38.0 };
-                    rows.push(Row { kind: 0, y, height, title: title.into(), ..Default::default() });
+                    groups += 1;
+                    if headings {
+                        let height = if y == 0.0 { 30.0 } else { 38.0 };
+                        rows.push(Row { kind: 0, y, height, title: title.into(), ..Default::default() });
+                        items.push(None);
+                        y += height;
+                    } else if groups > 1 {
+                        y += 8.0;
+                    }
+                }
+                Line::Hero(title, body) => {
+                    let height = if walkthrough == Some(0) { 300.0 } else { 280.0 };
+                    rows.push(Row { kind: 7, y, height, title: title.into(), subtitle: body.into(), ..Default::default() });
                     items.push(None);
                     y += height;
                 }
@@ -257,35 +493,115 @@ impl App {
                     items.push(None);
                     y += 150.0;
                 }
+                Line::Favourites(favourites) if a.grid() => {
+                    groups += 1;
+                    if headings {
+                        rows.push(Row { kind: 0, y, height: 30.0, title: "Favourites".into(), ..Default::default() });
+                        items.push(None);
+                        y += 30.0;
+                    }
+                    let tile = (list_width - TILE_GAP * (columns as f32 - 1.0)) / columns as f32;
+                    for (k, item) in favourites.into_iter().enumerate() {
+                        let (col, line) = ((k % columns) as f32, (k / columns) as f32);
+                        let row =
+                            row_for(&item, 4, col * (tile + TILE_GAP), y + line * (TILE_HEIGHT + TILE_GAP), tile, TILE_HEIGHT, &mut icons);
+                        rows.push(row);
+                        items.push(Some(item));
+                    }
+                    let lines_used = items.iter().rev().take_while(|i| i.is_some()).count().div_ceil(columns) as f32;
+                    y += lines_used * (TILE_HEIGHT + TILE_GAP) - TILE_GAP;
+                }
+                Line::Favourites(favourites) => {
+                    groups += 1;
+                    if headings {
+                        rows.push(Row { kind: 0, y, height: 30.0, title: "Suggestions".into(), ..Default::default() });
+                        items.push(None);
+                        y += 30.0;
+                    }
+                    for item in favourites {
+                        let height = if compact { 34.0 } else { 40.0 };
+                        rows.push(row_for(&item, 1, 0.0, y, 0.0, height, &mut icons));
+                        items.push(Some(item));
+                        y += height;
+                    }
+                }
                 Line::Item(item) => {
-                    let calc = item.kind == Kind::Calculator;
-                    let height = if calc { 100.0 } else { 40.0 };
-                    let (icon, tint) = icons.get(&item.icon, item.tint);
-                    rows.push(Row {
-                        kind: if calc { 2 } else { 1 },
-                        y,
-                        height,
-                        title: item.title.as_str().into(),
-                        subtitle: item.subtitle.as_str().into(),
-                        accessory: if calc { item.keywords.as_str() } else { item.kind.label() }.into(),
-                        icon,
-                        tint,
-                    });
+                    let (kind, height) = match (&item.run, item.kind) {
+                        (_, Kind::Calculator) => (2, 100.0),
+                        (Run::Setting(_), _) => (5, 44.0),
+                        (Run::Shortcut, _) => (6, 64.0),
+                        _ if compact => (1, 34.0),
+                        _ => (1, 40.0),
+                    };
+                    rows.push(row_for(&item, kind, 0.0, y, 0.0, height, &mut icons));
                     items.push(Some(item));
                     y += height;
                 }
             }
         }
         drop(icons);
-        let first = items.iter().position(Option::is_some).map_or(-1, |i| i as i32);
+        // Ctrl 1–9 for the first nine things you can open.
+        let mut quick = Vec::new();
+        if a.quick_keys {
+            for (i, item) in items.iter().enumerate() {
+                if item.is_some() && quick.len() < 9 {
+                    quick.push(i);
+                    rows[i].quick = (quick.len()).to_string().into();
+                }
+            }
+        }
+        *self.quick.borrow_mut() = quick;
+        let kept = keep.and_then(|id| items.iter().position(|i| i.as_ref().is_some_and(|i| i.id == id)));
+        let first = kept.or_else(|| items.iter().position(Option::is_some)).map_or(-1, |i| i as i32);
         *self.items.borrow_mut() = items;
         ui.set_glide(false);
         self.rows.set_vec(rows);
         ui.set_rows_height(y);
         ui.set_selected(-1);
         ui.set_selected(first);
-        ui.invoke_reset_scroll();
+        if kept.is_none() {
+            ui.invoke_reset_scroll();
+        }
         self.update_bar(&ui);
+    }
+
+    /// One step of the walkthrough.
+    fn onboarding_lines(&self, step: usize, config: &Config) -> Vec<Line> {
+        let settings = |keys: &[&str]| -> Vec<Line> {
+            let all = appearance::settings(config);
+            keys.iter().filter_map(|k| all.iter().find(|s| s.key == *k)).map(setting_item).map(Line::Item).collect()
+        };
+        match step {
+            0 => vec![Line::Hero("Flint".into(), "A keyboard launcher. No web views, nothing sent anywhere.".into())],
+            1 => {
+                let mut lines = vec![Line::Section("Open Flint with".into()), Line::Item(shortcut_item())];
+                lines.push(Line::Section("When you log in".into()));
+                lines.extend(settings(&["login"]));
+                lines
+            }
+            2 => std::iter::once(Line::Section("Look".into())).chain(settings(appearance::LOOK)).collect(),
+            3 => std::iter::once(Line::Section("Layout".into())).chain(settings(appearance::LAYOUT)).collect(),
+            _ => vec![Line::Hero("to open Flint from anywhere".into(), "Type to find apps, do sums and run commands.".into())],
+        }
+    }
+
+    /// The Appearance view's rows: every setting with its current value, and the file itself.
+    fn appearance_lines(&self, query: &str, config: &Config) -> Vec<Line> {
+        let query = query.trim().to_lowercase();
+        let mut lines = vec![Line::Section("Shortcut".into())];
+        if query.is_empty() || "shortcut keys hotkey open".contains(&query) {
+            lines.push(Line::Item(shortcut_item()));
+        }
+        lines.push(Line::Section("Appearance".into()));
+        for setting in appearance::settings(config) {
+            if !query.is_empty() && !format!("{} {}", setting.title, setting.about).to_lowercase().contains(&query) {
+                continue;
+            }
+            lines.push(Line::Item(setting_item(&setting)));
+        }
+        lines.push(Line::Section("Everything else".into()));
+        lines.push(Line::Item(settings_item()));
+        lines
     }
 
     fn selected_item(&self) -> Option<Item> {
@@ -295,17 +611,143 @@ impl App {
     }
 
     fn update_bar(&self, ui: &Launcher) {
-        let label = self.selected_item().map_or("", |i| i.verb());
-        ui.set_primary_label(label.into());
+        let item = self.selected_item();
+        // While the shortcut row is selected, the keys are let go of, so pressing them records
+        // them instead of closing Flint.
+        let recording = item.as_ref().is_some_and(|i| matches!(i.run, Run::Shortcut));
+        if recording != ui.get_recording() {
+            ui.set_recording(recording);
+            if let Some(hotkeys) = &*self.hotkeys.borrow() {
+                if recording {
+                    hotkeys.pause();
+                    let note = if hotkeys.available() { "Press the new keys" } else { "Set this in your desktop's keyboard settings" };
+                    self.show_shortcut(ui, note, true);
+                } else {
+                    hotkeys.resume();
+                }
+            }
+        }
+        ui.set_primary_label(item.as_ref().map_or("", |i| i.verb()).into());
+        if self.config.borrow().appearance.details {
+            ui.set_detail(item.map(|i| self.detail(&i)).unwrap_or_default());
+        }
+    }
+
+    /// What the details pane shows for an item.
+    fn detail(&self, item: &Item) -> Detail {
+        let (icon, _, tint) = self.icons.borrow_mut().get(&item.icon, item.tint);
+        let mut facts = Vec::new();
+        let mut fact = |label: &str, value: String| facts.push(Fact { label: label.into(), value: value.into() });
+        match &item.run {
+            Run::App(launch) => {
+                if let Some(runs) = apps::describe(launch) {
+                    fact("Runs", runs);
+                }
+            }
+            Run::Url(url) => fact("Opens", url.clone()),
+            Run::Copy(answer) => fact("Copies", answer.clone()),
+            Run::Setting(key) => {
+                let config = self.config.borrow();
+                if let Some(s) = appearance::settings(&config).into_iter().find(|s| s.key == *key) {
+                    fact("Now", s.label().to_string());
+                    fact("Choices", s.choices.iter().map(|c| c.0.as_str()).collect::<Vec<_>>().join(", "));
+                }
+            }
+            _ => {}
+        }
+        if let Some(path) = &item.path {
+            fact("File", path.to_string_lossy().into_owned());
+        }
+        if matches!(item.kind, Kind::Application | Kind::Command) && !matches!(item.run, Run::Setting(_)) {
+            match self.usage.borrow().stats(&item.id) {
+                Some((count, last)) => {
+                    fact("Opened", if count == 1 { "Once".into() } else { format!("{count} times") });
+                    fact("Last opened", ago(crate::usage::now().saturating_sub(last)));
+                }
+                None => fact("Opened", "Not from Flint yet".into()),
+            }
+        }
+        let kind = match item.kind {
+            Kind::Calculator => "Calculator",
+            Kind::Fallback => "Web",
+            k => k.label(),
+        };
+        Detail {
+            icon,
+            tint,
+            title: item.title.as_str().into(),
+            subtitle: item.subtitle.as_str().into(),
+            kind: kind.into(),
+            facts: ModelRc::new(VecModel::from(facts)),
+        }
+    }
+
+    /// Ctrl and a digit: opens that row, when quick keys are on.
+    fn quick_open(&self, key: &str) -> bool {
+        let Some(n) = key.parse::<usize>().ok().filter(|n| (1..=9).contains(n)) else { return false };
+        let Some(&row) = self.quick.borrow().get(n - 1) else { return false };
+        self.activate(row as i32, false);
+        true
+    }
+
+    /// ← and →: along the favourite tiles, or through a setting's choices.
+    fn step(&self, delta: i32) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let Some(item) = self.selected_item() else { return };
+        if let Run::Setting(key) = item.run {
+            self.change_setting(key, delta);
+            return;
+        }
+        let tiles = self.tiles();
+        if let Some(at) = tiles.iter().position(|&i| i == ui.get_selected() as usize) {
+            let next = (at as i32 + delta).clamp(0, tiles.len() as i32 - 1) as usize;
+            self.select(tiles[next] as i32, false);
+        }
+    }
+
+    fn tiles(&self) -> Vec<usize> {
+        let rows = &self.rows;
+        (0..rows.row_count()).filter(|&i| rows.row_data(i).is_some_and(|r| r.kind == 4)).collect()
+    }
+
+    fn change_setting(&self, key: &'static str, delta: i32) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let before = self.config.borrow().clone();
+        let Some(setting) = appearance::settings(&before).into_iter().find(|s| s.key == key) else { return };
+        if let Err(e) = setting.step(delta) {
+            self.toast(&format!("Couldn't save that: {e}"), true);
+            return;
+        }
+        *self.config.borrow_mut() = config::load();
+        self.apply_theme();
+        self.apply_appearance();
+        self.refresh_keeping(&ui.get_query(), Some(&format!("setting:{key}")));
+        let after = self.config.borrow().appearance.blur;
+        if after != before.appearance.blur && window::needs_restart(after) && self.onboarding.get().is_some() {
+            self.restart_after_onboarding.set(true);
+            self.toast("Blur changes when you finish", false);
+        } else if after != before.appearance.blur && window::needs_restart(after) {
+            RESTART_TO_APPEARANCE.store(true, Ordering::SeqCst);
+            self.toast("Restarting to change how Flint draws…", false);
+            RESTART.store(true, Ordering::SeqCst);
+            Timer::single_shot(Duration::from_millis(700), || {
+                let _ = slint::quit_event_loop();
+            });
+        }
+    }
+
+    fn hover(&self, i: i32, x: f32, y: f32) {
+        let was = self.pointer.replace(Some((x, y)));
+        // The first report after opening is where the pointer already was.
+        if was.is_some_and(|(px, py)| (px - x).abs() + (py - y).abs() >= 1.0) {
+            self.select(i, true);
+        }
     }
 
     fn select(&self, i: i32, by_pointer: bool) {
         let Some(ui) = self.ui.upgrade() else { return };
         // A pointer resting where the window opens reports itself as a hover; only a pointer
         // moved after opening should take the selection off the first row.
-        if by_pointer && self.shown_at.get().is_some_and(|t| t.elapsed() < POINTER_SETTLE) {
-            return;
-        }
         let ok = usize::try_from(i).ok().and_then(|i| self.items.borrow().get(i).map(Option::is_some)).unwrap_or(false);
         if ok && !ui.get_actions_open() {
             ui.set_glide(!by_pointer);
@@ -318,20 +760,46 @@ impl App {
         let Some(ui) = self.ui.upgrade() else { return };
         let items = self.items.borrow();
         let selectable: Vec<i32> = items.iter().enumerate().filter(|(_, it)| it.is_some()).map(|(i, _)| i as i32).collect();
+        drop(items);
         if selectable.is_empty() {
             return;
         }
-        let at = selectable.iter().position(|&i| i == ui.get_selected()).unwrap_or(0) as i32;
+        let current = ui.get_selected();
+        // On the tiles, ↑ and ↓ go a whole row of tiles at a time, then on to the list.
+        let tiles = self.tiles();
+        if delta.abs() == 1
+            && let Some(at) = tiles.iter().position(|&i| i as i32 == current)
+        {
+            let columns = self.tile_columns(&tiles);
+            let target = at as i32 + delta * columns as i32;
+            let next = if (0..tiles.len() as i32).contains(&target) {
+                tiles[target as usize] as i32
+            } else if delta > 0 {
+                selectable.iter().copied().find(|&i| !tiles.contains(&(i as usize))).unwrap_or(current)
+            } else {
+                *selectable.last().unwrap_or(&current)
+            };
+            self.select(next, false);
+            return;
+        }
+        let at = selectable.iter().position(|&i| i == current).unwrap_or(0) as i32;
         let n = selectable.len() as i32;
         // Single steps wrap around the ends; page steps stop at them.
         let next = if delta.abs() == 1 { (at + delta).rem_euclid(n) } else { (at + delta).clamp(0, n - 1) };
-        drop(items);
         self.select(selectable[next as usize], false);
+    }
+
+    /// How many tiles sit side by side: the ones sharing the first tile's row.
+    fn tile_columns(&self, tiles: &[usize]) -> usize {
+        let y = |i: usize| self.rows.row_data(i).map_or(0.0, |r| r.y);
+        tiles.first().map_or(1, |&first| tiles.iter().take_while(|&&i| y(i) == y(first)).count().max(1))
     }
 
     fn escape(&self) {
         let Some(ui) = self.ui.upgrade() else { return };
-        if ui.get_query().is_empty() {
+        if ui.get_query().is_empty() && self.in_appearance.get() {
+            self.leave_appearance(&ui);
+        } else if ui.get_query().is_empty() {
             window::hide(&ui);
         } else {
             ui.set_query(SharedString::new());
@@ -343,6 +811,10 @@ impl App {
         let Some(ui) = self.ui.upgrade() else { return };
         let item = usize::try_from(i).ok().and_then(|i| self.items.borrow().get(i).cloned().flatten());
         let Some(item) = item else { return };
+        if let Run::Setting(key) = item.run {
+            self.change_setting(key, 1);
+            return;
+        }
         if alternate {
             // Ctrl/Cmd Enter: the second action in the panel.
             let acts = actions_for(&item, &self.usage.borrow());
@@ -363,7 +835,7 @@ impl App {
             ui.set_confirm_title(title.into());
             ui.set_confirm_message(message.into());
             ui.set_confirm_label(label.into());
-            ui.set_confirm_icon(self.icons.borrow_mut().builtin(match &item.icon {
+            ui.set_confirm_icon(self.icons.borrow_mut().builtin_solid(match &item.icon {
                 crate::catalog::Icon::Builtin(name) => name,
                 _ => "power",
             }));
@@ -372,7 +844,7 @@ impl App {
             ui.set_confirm_open(true);
             return;
         }
-        if record && item.kind != Kind::Calculator {
+        if record && item.kind != Kind::Calculator && !matches!(item.run, Run::Setting(_) | Run::Shortcut) {
             self.usage.borrow_mut().record(&item.id, &ui.get_query());
             self.usage_changed.set(true);
         }
@@ -386,7 +858,22 @@ impl App {
                 self.config.borrow_mut().theme = key.to_string();
                 self.apply_theme();
                 let name = palettes::find(key).map_or(*key, |p| p.name);
-                config::save_theme(key).map_err(|e| e.to_string()).map(|_| Done::Toast(format!("Theme set to {name}"), false))
+                config::set(None, "theme", config::Value::Text(key))
+                    .map_err(|e| e.to_string())
+                    .map(|_| Done::Toast(format!("Theme set to {name}"), false))
+            }
+            Run::Appearance => {
+                self.open_appearance();
+                Ok(Done::Stay)
+            }
+            Run::Onboarding => {
+                self.start_onboarding();
+                Ok(Done::Stay)
+            }
+            Run::Shortcut => Ok(Done::Stay),
+            Run::Setting(key) => {
+                self.change_setting(key, 1);
+                Ok(Done::Stay)
             }
             Run::Reload => {
                 self.rescan(true);
@@ -485,7 +972,13 @@ impl App {
             }
             shown.push(i);
             let keys: Vec<SharedString> = keys.iter().map(|k| SharedString::from(*k)).collect();
-            rows.push(ActionRow { title: title.into(), icon: icons.builtin(icon), keys: ModelRc::new(VecModel::from(keys)), danger });
+            rows.push(ActionRow {
+                title: title.into(),
+                icon: icons.builtin(icon),
+                icon_on: icons.builtin_solid(icon),
+                keys: ModelRc::new(VecModel::from(keys)),
+                danger,
+            });
         }
         *self.shown_actions.borrow_mut() = shown;
         self.action_rows.set_vec(rows);
@@ -539,6 +1032,35 @@ enum Done {
     Stay,
 }
 
+fn shortcut_item() -> Item {
+    Item {
+        id: "shortcut".into(),
+        title: "Shortcut".into(),
+        subtitle: String::new(),
+        keywords: String::new(),
+        kind: Kind::Command,
+        icon: crate::catalog::Icon::Builtin("bolt"),
+        tint: 7,
+        run: Run::Shortcut,
+        path: None,
+    }
+}
+
+fn setting_item(setting: &appearance::Setting) -> Item {
+    Item {
+        id: format!("setting:{}", setting.key),
+        title: setting.title.into(),
+        subtitle: setting.about.into(),
+        // A setting's current value travels in `keywords` (see refresh_keeping).
+        keywords: setting.label().into(),
+        kind: Kind::Command,
+        icon: crate::catalog::Icon::Builtin(setting.icon),
+        tint: setting.tint,
+        run: Run::Setting(setting.key),
+        path: None,
+    }
+}
+
 fn settings_item() -> Item {
     crate::catalog::commands().into_iter().find(|i| matches!(i.run, Run::Settings)).expect("settings is a command")
 }
@@ -583,6 +1105,18 @@ fn describe(act: &Act, item: &Item, second: bool) -> (String, &'static str, Vec<
         Act::Copy(what, _) => (format!("Copy {}", capitalise(what)), "copy", keys, false),
         Act::Reveal(_) => (reveal_label().to_string(), "folder", keys, false),
         Act::Forget => ("Reset Ranking".into(), "eraser", keys, true),
+    }
+}
+
+/// "3 hours ago", from a number of seconds.
+fn ago(seconds: u64) -> String {
+    let (minutes, hours, days) = (seconds / 60, seconds / 3600, seconds / 86_400);
+    match () {
+        _ if minutes < 1 => "Just now".into(),
+        _ if hours < 1 => format!("{minutes} minute{} ago", if minutes == 1 { "" } else { "s" }),
+        _ if days < 1 => format!("{hours} hour{} ago", if hours == 1 { "" } else { "s" }),
+        _ if days == 1 => "Yesterday".into(),
+        _ => format!("{days} days ago"),
     }
 }
 

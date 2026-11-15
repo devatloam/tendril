@@ -3,33 +3,61 @@ import "../fonts/Geist-Medium.ttf";
 import "../fonts/Geist-SemiBold.ttf";
 import { Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Row, ActionRow, Keycap, RowIcon, SectionRow, ItemRow, CalcRow, ActionPanel, ConfirmDialog } from "parts.slint";
-import { Tumble, Glow, Sweep } from "motion.slint";
+import { Row, Fact, Detail, ActionRow, Keycap, RowIcon, SectionRow, ItemRow, TileCell, DetailPane, CalcRow, ActionPanel, ConfirmDialog } from "parts.slint";
+import { Tumble, Glow, Sweep, Spectrum } from "motion.slint";
 
-export { Theme, Row, ActionRow }
+export { Theme, Row, Fact, Detail, ActionRow }
+
+// The highlight under the selected row or tile: lit from above like Blight's `gloss`, and drawn
+// in the ink colour at low strength so it reads the same over a solid panel, glass or the glow.
+component Highlight inherits Rectangle {
+    border-radius: 8px;
+    background: @linear-gradient(180deg, Theme.highlight.with-alpha(Theme.dark ? 0.26 : 0.17) 0%, Theme.highlight.with-alpha(Theme.dark ? 0.17 : 0.11) 100%);
+    Rectangle {
+        x: 6px;
+        y: 0;
+        width: parent.width - 12px;
+        height: 1px;
+        background: #ffffff.with-alpha(Theme.dark ? 0.07 : 0.5);
+    }
+}
 
 export component Launcher inherits Window {
     title: "Flint";
-    width: 750px;
-    height: 474px;
+    // Compact: narrower, and only as tall as what it lists.
+    width: compact ? 620px : 750px;
+    height: compact ? min(474px, 57px + max(rows-height + 14px, 60px)) : 474px;
     no-frame: frameless;
     always-on-top: true;
-    background: Theme.panel;
+    background: see-through ? transparent : Theme.panel;
     default-font-family: "Geist";
     default-font-size: 14px;
     forward-focus: search;
 
-    // The list. Rust lays it out (each row's y and height) and keeps `selected` on an item.
+    // ---- Appearance (config.toml's [appearance], or the Appearance view) ----
+    // See-through: the system blurs what's behind; the panel is drawn at `opacity`.
+    in property <bool> see-through;
+    in property <float> panel-opacity: 0.78;
+    // Where the system rounds the window itself (Windows 11, macOS), Flint doesn't.
+    in property <length> corner: 12px;
+    // 0 off, 1 still, 2 drifting.
+    in property <int> glow-mode: 1;
+    in property <bool> gradient-divider: true;
+    in property <bool> compact;
+    in property <bool> details;
+
+    // ---- The list. Rust lays it out and keeps `selected` on an item. ----
     in property <[Row]> rows;
     in property <length> rows-height;
     in-out property <int> selected: -1;
     // Off while the list is replaced, so the highlight only glides between rows you move through.
     in property <bool> glide;
+    in property <Detail> detail;
 
     in-out property <string> query;
     in property <string> placeholder: "Search for apps and commands…";
 
-    // The bar along the bottom.
+    // ---- The bar along the bottom. ----
     in property <image> context-icon;
     in property <int> context-tint;
     in property <string> context-title: "Flint";
@@ -37,13 +65,8 @@ export component Launcher inherits Window {
     in property <string> mod-key: "Ctrl";
     in property <string> toast;
     in property <bool> toast-failed;
-    // Working on something (finding apps): a line of colour runs under the search field and
-    // the shapes toss in the bar, with this said beside them.
     in property <bool> busy;
     in property <string> busy-label: "Looking for apps…";
-    // About Flint: the shapes over Blight's glow.
-    in-out property <bool> about-open;
-    in property <string> about-detail;
     // macOS keeps its own frame (hidden title bar) for the rounded corners and shadow.
     in property <bool> frameless: true;
     // From the system's light or dark setting. Unknown counts as dark.
@@ -53,24 +76,47 @@ export component Launcher inherits Window {
         root.scheme-changed();
     }
 
-    // Actions (Ctrl/Cmd K) for the selected item.
     in property <[ActionRow]> actions;
     in property <string> actions-title;
     in-out property <bool> actions-open;
     in-out property <int> action-selected;
     in-out property <string> action-query;
 
-    // "Are you sure?" before anything that ends your session.
     in property <bool> confirm-open;
     in property <string> confirm-title;
     in property <string> confirm-message;
     in property <string> confirm-label;
     in property <image> confirm-icon;
 
+    in-out property <bool> about-open;
+    in property <string> about-detail;
+
+    // ---- The first-run walkthrough ----
+    in property <bool> onboarding;
+    in property <int> step;
+    in property <int> steps: 5;
+    in property <string> step-title;
+    in property <string> step-body;
+    // The shortcut that opens Flint, as keycaps, and what to say under it.
+    in property <[string]> shortcut-keys;
+    in property <string> shortcut-note;
+    in property <bool> shortcut-ok: true;
+    // The shortcut row is selected: key presses with a modifier become the new shortcut.
+    in property <bool> recording;
+    callback onboard-next();
+    callback onboard-back();
+    callback record(string, bool, bool, bool, bool) -> bool;
+
     callback query-edited(string);
     callback move(int);
-    callback hover(int);
+    // ← and → on a tile or a setting.
+    callback nudge(int);
+    // Which row, and where the pointer is in the window, so Rust can tell a real move from rows
+    // moving under a still pointer.
+    callback hover(int, length, length);
     callback activate(int, bool);
+    // Ctrl and a digit: true if it opened something.
+    callback quick(string) -> bool;
     callback toggle-actions();
     callback action-query-edited(string);
     callback action-move(int);
@@ -100,9 +146,8 @@ export component Launcher inherits Window {
         if selected < 0 || selected >= rows.length {
             return;
         }
-        // Headings above the first item stay in view when it's picked.
-        if rows[selected].y - 8px < -list.content-y || selected <= 1 {
-            list.content-y = selected <= 1 ? 0 : -(rows[selected].y - 8px);
+        if rows[selected].y - 8px < -list.content-y || rows[selected].y < 80px {
+            list.content-y = rows[selected].y < 80px ? 0 : -(rows[selected].y - 8px);
         } else if rows[selected].y + rows[selected].height + 8px > -list.content-y + list.height {
             list.content-y = -(rows[selected].y + rows[selected].height + 8px - list.height);
         }
@@ -112,430 +157,761 @@ export component Launcher inherits Window {
         reveal();
     }
 
-    FocusScope {
-        // Seen before the text field, so the arrows and Enter steer the list while you type.
-        capture-key-pressed(e) => {
-            if root.about-open {
-                if e.text == Key.Escape || e.text == Key.Return {
-                    root.close-about();
+    property <bool> on-step-row: selected >= 0 && selected < rows.length && (rows[selected].kind == 4 || rows[selected].kind == 5);
+    property <bool> side-pane: details && !compact;
+    property <length> bar-height: compact ? 0 : 40px;
+
+    shell := Rectangle {
+        border-radius: corner;
+        clip: true;
+        background: see-through ? Theme.panel.with-alpha(root.panel-opacity) : Theme.panel;
+
+        // A sheen, brighter at the top, as on Blight's glass.
+        Rectangle {
+            background: @linear-gradient(180deg, #ffffff.with-alpha(Theme.dark ? 0.055 : 0.3) 0%, #ffffff.with-alpha(0) 100%);
+            height: 160px;
+            y: 0;
+        }
+
+        if glow-mode > 0: Glow {
+            moving: glow-mode == 2;
+            strength: Theme.dark ? 0.12 : 0.16;
+            across: 520px;
+        }
+
+        FocusScope {
+            // Seen before the text field, so the arrows and Enter steer the list while you type.
+            capture-key-pressed(e) => {
+                if root.recording && !root.confirm-open && root.record(e.text, e.modifiers.control, e.modifiers.alt, e.modifiers.shift, e.modifiers.meta) {
+                    return accept;
                 }
-                return accept;
-            }
-            if root.confirm-open {
-                if e.text == Key.Escape {
-                    root.answer(false);
-                } else if e.text == Key.Return {
-                    root.answer(true);
+                if root.onboarding {
+                    if e.text == Key.Return {
+                        root.onboard-next();
+                    } else if e.text == Key.Escape {
+                        root.onboard-back();
+                    } else if e.text == Key.UpArrow {
+                        root.move(-1);
+                    } else if e.text == Key.DownArrow {
+                        root.move(1);
+                    } else if root.on-step-row && e.text == Key.LeftArrow {
+                        root.nudge(-1);
+                    } else if root.on-step-row && e.text == Key.RightArrow {
+                        root.nudge(1);
+                    }
+                    // Nothing to type into during the walkthrough.
+                    return accept;
                 }
-                return accept;
-            }
-            if e.modifiers.control && (e.text == "k" || e.text == "K") {
-                root.toggle-actions();
-                return accept;
-            }
-            if root.actions-open {
-                if e.text == Key.Escape {
+                if root.about-open {
+                    if e.text == Key.Escape || e.text == Key.Return {
+                        root.close-about();
+                    }
+                    return accept;
+                }
+                if root.confirm-open {
+                    if e.text == Key.Escape {
+                        root.answer(false);
+                    } else if e.text == Key.Return {
+                        root.answer(true);
+                    }
+                    return accept;
+                }
+                if e.modifiers.control && (e.text == "k" || e.text == "K") {
                     root.toggle-actions();
                     return accept;
                 }
-                if e.text == Key.UpArrow {
-                    root.action-move(-1);
+                if root.actions-open {
+                    if e.text == Key.Escape {
+                        root.toggle-actions();
+                        return accept;
+                    }
+                    if e.text == Key.UpArrow {
+                        root.action-move(-1);
+                        return accept;
+                    }
+                    if e.text == Key.DownArrow {
+                        root.action-move(1);
+                        return accept;
+                    }
+                    if e.text == Key.Return {
+                        root.action-run(root.action-selected);
+                        return accept;
+                    }
+                    return reject;
+                }
+                if e.modifiers.control && !e.modifiers.shift && root.quick(e.text) {
                     return accept;
                 }
-                if e.text == Key.DownArrow {
-                    root.action-move(1);
+                if root.on-step-row && e.text == Key.LeftArrow {
+                    root.nudge(-1);
+                    return accept;
+                }
+                if root.on-step-row && e.text == Key.RightArrow {
+                    root.nudge(1);
+                    return accept;
+                }
+                if e.text == Key.UpArrow || ((e.modifiers.control || e.modifiers.meta) && e.text == "p") {
+                    root.move(-1);
+                    return accept;
+                }
+                if e.text == Key.DownArrow || ((e.modifiers.control || e.modifiers.meta) && e.text == "n") {
+                    root.move(1);
+                    return accept;
+                }
+                if e.text == Key.PageUp {
+                    root.move(-8);
+                    return accept;
+                }
+                if e.text == Key.PageDown {
+                    root.move(8);
                     return accept;
                 }
                 if e.text == Key.Return {
-                    root.action-run(root.action-selected);
+                    root.activate(root.selected, e.modifiers.control);
                     return accept;
                 }
-                return reject;
-            }
-            if e.text == Key.UpArrow || ((e.modifiers.control || e.modifiers.meta) && e.text == "p") {
-                root.move(-1);
-                return accept;
-            }
-            if e.text == Key.DownArrow || ((e.modifiers.control || e.modifiers.meta) && e.text == "n") {
-                root.move(1);
-                return accept;
-            }
-            if e.text == Key.PageUp {
-                root.move(-8);
-                return accept;
-            }
-            if e.text == Key.PageDown {
-                root.move(8);
-                return accept;
-            }
-            if e.text == Key.Return {
-                root.activate(root.selected, e.modifiers.control);
-                return accept;
-            }
-            if e.text == Key.Escape {
-                root.escape();
-                return accept;
-            }
-            if e.modifiers.control && e.text == "," {
-                root.settings();
-                return accept;
-            }
-            reject
-        }
-
-        VerticalLayout {
-            // Search
-            Rectangle {
-                height: 56px;
-                search := TextInput {
-                    x: 20px;
-                    width: parent.width - 40px;
-                    text <=> root.query;
-                    color: Theme.ink;
-                    font-size: 17px;
-                    vertical-alignment: center;
-                    single-line: true;
-                    selection-background-color: Theme.blue.with-alpha(0.35);
-                    selection-foreground-color: Theme.ink;
-                    edited => {
-                        root.query-edited(self.text);
-                    }
+                if e.text == Key.Escape {
+                    root.escape();
+                    return accept;
                 }
-
-                Text {
-                    x: 20px;
-                    text: root.placeholder;
-                    color: Theme.ink-3;
-                    font-size: 17px;
-                    vertical-alignment: center;
-                    visible: root.query == "";
+                if e.modifiers.control && e.text == "," {
+                    root.settings();
+                    return accept;
                 }
-
-                if root.busy: Sweep {
-                    y: parent.height - 2px;
-                    width: parent.width;
-                }
+                reject
             }
 
-            Rectangle {
-                height: 1px;
-                background: Theme.line;
-            }
+            VerticalLayout {
+                // Search
+                Rectangle {
+                    height: root.onboarding ? 86px : compact ? 52px : 56px;
+                    if root.onboarding: VerticalLayout {
+                        x: 22px;
+                        width: parent.width - 44px;
+                        alignment: center;
+                        spacing: 4px;
+                        Text {
+                            text: root.step-title;
+                            color: Theme.ink;
+                            font-size: 19px;
+                            font-weight: 600;
+                        }
 
-            // Results
-            Rectangle {
-                vertical-stretch: 1;
-                list := Flickable {
-                    x: 8px;
-                    width: parent.width - 16px;
-                    content-height: root.rows-height + 8px;
-                    // The highlight moves between rows rather than blinking from one to the next.
-                    if root.selected >= 0 && root.rows[root.selected].kind == 1: Rectangle {
-                        y: root.rows[root.selected].y;
-                        height: root.rows[root.selected].height;
-                        border-radius: 8px;
-                        background: Theme.raised;
-                        animate y {
-                            duration: root.glide ? 110ms : 0ms;
-                            easing: cubic-bezier(0.2, 0, 0, 1);
+                        Text {
+                            text: root.step-body;
+                            color: Theme.ink-2;
+                            font-size: 13px;
+                            wrap: word-wrap;
                         }
                     }
-                    for row[i] in root.rows: Rectangle {
-                        y: row.y;
-                        height: row.height;
-                        if row.kind == 0: SectionRow {
-                            data: row;
+                    // Kept, see-through, during the walkthrough: it holds the keyboard focus that the
+                    // keys above are read through.
+                    search := TextInput {
+                        opacity: root.onboarding ? 0 : 1;
+                        x: 20px;
+                        width: parent.width - 40px - (compact ? 160px : 0);
+                        text <=> root.query;
+                        color: Theme.ink;
+                        font-size: compact ? 18px : 17px;
+                        vertical-alignment: center;
+                        single-line: true;
+                        selection-background-color: Theme.highlight.with-alpha(0.4);
+                        selection-foreground-color: Theme.ink;
+                        edited => {
+                            root.query-edited(self.text);
                         }
-                        if row.kind == 1: ItemRow {
-                            data: row;
-                            selected: i == root.selected;
-                        }
-                        if row.kind == 2: CalcRow {
-                            data: row;
-                            selected: i == root.selected;
-                            background: i == root.selected ? Theme.raised : transparent;
-                        }
-                        // Nothing matched: the shapes lying where they fell, on a still glow.
-                        if row.kind == 3: Rectangle {
-                            border-radius: 10px;
-                            clip: true;
-                            Glow {
-                                moving: false;
-                                strength: Theme.dark ? 0.13 : 0.18;
-                                across: 300px;
+                    }
+
+                    Text {
+                        x: 20px;
+                        text: root.placeholder;
+                        color: Theme.ink-3;
+                        font-size: compact ? 18px : 17px;
+                        vertical-alignment: center;
+                        visible: root.query == "" && !root.onboarding;
+                    }
+
+                    // Without a bottom bar, toasts and "working" sit at the field's right end.
+                    if compact && (root.toast != "" || root.busy): HorizontalLayout {
+                        x: parent.width - self.width - 16px;
+                        alignment: end;
+                        spacing: 8px;
+                        VerticalLayout {
+                            alignment: center;
+                            Tumble {
+                                mode: root.toast != "" ? 2 : 0;
+                                size: 6px;
                             }
+                        }
 
-                            VerticalLayout {
+                        Text {
+                            text: root.toast != "" ? root.toast : root.busy-label;
+                            color: root.toast-failed ? Theme.red : Theme.ink-2;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    if root.gradient-divider: Spectrum {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        strength: 0.8;
+                    }
+                    if !root.gradient-divider: Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: Theme.line;
+                    }
+                    if root.busy: Sweep {
+                        y: parent.height - 2px;
+                        width: parent.width;
+                    }
+                }
+
+                HorizontalLayout {
+                    vertical-stretch: 1;
+                    // Results
+                    Rectangle {
+                        horizontal-stretch: side-pane ? 0 : 1;
+                        min-width: side-pane ? 300px : 0px;
+                        max-width: side-pane ? 300px : 10000px;
+                        list := Flickable {
+                            x: 8px;
+                            y: 0;
+                            width: parent.width - 16px;
+                            content-height: root.rows-height + 8px;
+                            // The highlight moves between rows rather than blinking from one to the next.
+                            if root.selected >= 0 && (root.rows[root.selected].kind == 1 || root.rows[root.selected].kind == 4 || root.rows[root.selected].kind == 5 || root.rows[root.selected].kind == 6): Highlight {
+                                x: root.rows[root.selected].x;
+                                y: root.rows[root.selected].y;
+                                width: root.rows[root.selected].width > 0 ? root.rows[root.selected].width : list.width;
+                                height: root.rows[root.selected].height;
+                                animate x, y {
+                                    duration: root.glide ? 110ms : 0ms;
+                                    easing: cubic-bezier(0.2, 0, 0, 1);
+                                }
+                            }
+                            for row[i] in root.rows: Rectangle {
+                                x: row.x;
+                                y: row.y;
+                                width: row.width > 0 ? row.width : list.width;
+                                height: row.height;
+                                if row.kind == 0: SectionRow {
+                                    data: row;
+                                }
+                                if row.kind == 1 || row.kind == 5: ItemRow {
+                                    data: row;
+                                    selected: i == root.selected;
+                                    mod-key: root.mod-key;
+                                    hint: compact && row.kind == 1 ? root.primary-label : "";
+                                }
+                                if row.kind == 4: TileCell {
+                                    data: row;
+                                    selected: i == root.selected;
+                                }
+                                if row.kind == 2: CalcRow {
+                                    data: row;
+                                    selected: i == root.selected;
+                                    background: i == root.selected ? Theme.highlight.with-alpha(Theme.dark ? 0.2 : 0.13) : transparent;
+                                }
+                                // Nothing matched: the shapes hop once on a still glow.
+                                if row.kind == 3: Rectangle {
+                                    border-radius: 10px;
+                                    clip: true;
+                                    Glow {
+                                        moving: false;
+                                        strength: Theme.dark ? 0.13 : 0.18;
+                                        across: 300px;
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 10px;
+                                        HorizontalLayout {
+                                            alignment: center;
+                                            Tumble {
+                                                mode: 2;
+                                                size: 18px;
+                                            }
+                                        }
+
+                                        Text {
+                                            text: row.title;
+                                            color: Theme.ink-2;
+                                            font-size: 13px;
+                                            horizontal-alignment: center;
+                                        }
+                                    }
+                                }
+                                // The shortcut that opens Flint, shown as its keys.
+                                if row.kind == 6: HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 14px;
+                                    spacing: 12px;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        RowIcon {
+                                            source: i == root.selected ? row.icon-on : row.icon;
+                                            tint: row.tint;
+                                            on: i == root.selected;
+                                        }
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        horizontal-stretch: 1;
+                                        Text {
+                                            text: row.title;
+                                            color: Theme.ink;
+                                            font-weight: 500;
+                                        }
+
+                                        Text {
+                                            text: i == root.selected ? root.shortcut-note : "Select this, then press new keys";
+                                            color: i == root.selected && !root.shortcut-ok ? Theme.red : Theme.ink-3;
+                                            font-size: 12px;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 5px;
+                                        alignment: end;
+                                        for key in root.shortcut-keys: VerticalLayout {
+                                            alignment: center;
+                                            Keycap {
+                                                label: key;
+                                                big: true;
+                                                strong: i == root.selected;
+                                            }
+                                        }
+                                    }
+                                }
+                                // The walkthrough's welcome and goodbye: the shapes over the glow.
+                                if row.kind == 7: Rectangle {
+                                    border-radius: 12px;
+                                    clip: true;
+                                    Glow {
+                                        strength: Theme.dark ? 0.16 : 0.2;
+                                        across: 420px;
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 10px;
+                                        HorizontalLayout {
+                                            alignment: center;
+                                            Tumble {
+                                                mode: root.step == 0 ? 0 : 2;
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            height: 6px;
+                                        }
+
+                                        if root.step != 0: HorizontalLayout {
+                                            alignment: center;
+                                            spacing: 6px;
+                                            for key in root.shortcut-keys: Keycap {
+                                                label: key;
+                                                big: true;
+                                                strong: true;
+                                            }
+                                        }
+                                        Text {
+                                            text: row.title;
+                                            color: Theme.ink;
+                                            font-size: root.step == 0 ? 26px : 15px;
+                                            font-weight: 600;
+                                            horizontal-alignment: center;
+                                        }
+
+                                        Text {
+                                            text: row.subtitle;
+                                            color: Theme.ink-2;
+                                            font-size: 13px;
+                                            horizontal-alignment: center;
+                                        }
+                                    }
+                                }
+                                if row.kind == 1 || row.kind == 2 || row.kind == 4 || row.kind == 5 || row.kind == 6: TouchArea {
+                                    pointer-event(e) => {
+                                        if e.kind == PointerEventKind.move && i != root.selected {
+                                            root.hover(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                        }
+                                    }
+                                    clicked => {
+                                        root.activate(i, false);
+                                    }
+                                }
+                            }
+                        }
+
+                        // A thin scroll bar, only when there's more than fits.
+                        if list.content-height > list.height: Rectangle {
+                            x: parent.width - 5px;
+                            width: 3px;
+                            border-radius: 1.5px;
+                            background: Theme.ink-3.with-alpha(0.35);
+                            height: max(24px, list.height * list.height / list.content-height);
+                            y: (list.height - self.height) * (-list.content-y / max(1px, list.content-height - list.height));
+                        }
+                    }
+
+                    if side-pane: Rectangle {
+                        width: 1px;
+                        background: Theme.line;
+                    }
+                    if side-pane: DetailPane {
+                        horizontal-stretch: 1;
+                        detail: root.detail;
+                    }
+                }
+
+                // The bar along the bottom: where you are, and what Enter and Ctrl K will do.
+                if !compact: Rectangle {
+                    height: 40px;
+                    background: Theme.bg.with-alpha(see-through ? 0.3 : 0.55);
+                    Rectangle {
+                        y: 0;
+                        height: 1px;
+                        background: Theme.line.with-alpha(0.8);
+                    }
+
+                    // The walkthrough's bar: where you are in it, and the way on or back.
+                    if root.onboarding: HorizontalLayout {
+                        padding-left: 18px;
+                        padding-right: 10px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            for n in root.steps: VerticalLayout {
                                 alignment: center;
-                                spacing: 10px;
-                                HorizontalLayout {
-                                    alignment: center;
-                                    Tumble {
-                                        mode: 1;
-                                        size: 18px;
+                                Rectangle {
+                                    width: n == root.step ? 18px : 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: n == root.step ? Theme.highlight : Theme.ink.with-alpha(n < root.step ? 0.45 : 0.16);
+                                    animate width {
+                                        duration: 250ms;
+                                        easing: cubic-bezier(0.2, 0, 0, 1);
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                height: 28px;
+                                border-radius: 6px;
+                                background: back-touch.has-hover ? Theme.ink.with-alpha(0.08) : transparent;
+                                back-touch := TouchArea {
+                                    clicked => {
+                                        root.onboard-back();
                                     }
                                 }
 
-                                Text {
-                                    text: row.title;
-                                    color: Theme.ink-2;
-                                    font-size: 13px;
-                                    horizontal-alignment: center;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 6px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: root.step == 0 ? "Skip" : "Back";
+                                        color: Theme.ink-2;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Keycap {
+                                            label: "Esc";
+                                        }
+                                    }
                                 }
                             }
                         }
-                        if row.kind == 1 || row.kind == 2: TouchArea {
-                            pointer-event(e) => {
-                                if e.kind == PointerEventKind.move && i != root.selected {
-                                    root.hover(i);
+
+                        // The main button is white with the page's colour for its words, as on Blight.
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                height: 28px;
+                                border-radius: 7px;
+                                background: next-touch.has-hover ? Theme.ink.with-alpha(0.88) : Theme.ink;
+                                next-touch := TouchArea {
+                                    clicked => {
+                                        root.onboard-next();
+                                    }
                                 }
-                            }
-                            clicked => {
-                                root.activate(i, false);
-                            }
-                        }
-                    }
-                }
 
-                // A thin scroll bar, only when there's more than fits.
-                if list.content-height > list.height: Rectangle {
-                    x: parent.width - 5px;
-                    width: 3px;
-                    border-radius: 1.5px;
-                    background: Theme.ink-3.with-alpha(0.35);
-                    height: max(24px, list.height * list.height / list.content-height);
-                    y: (list.height - self.height) * (-list.content-y / max(1px, list.content-height - list.height));
-                }
-            }
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 6px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: root.step == 0 ? "Get Started" : root.step == root.steps - 1 ? "Done" : "Continue";
+                                        color: Theme.panel;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                    }
 
-            // The bar along the bottom: where you are, and what Enter and Ctrl K will do.
-            Rectangle {
-                height: 40px;
-                background: Theme.bg;
-                Rectangle {
-                    y: 0;
-                    height: 1px;
-                    background: Theme.line;
-                }
-
-                HorizontalLayout {
-                    padding-left: 14px;
-                    padding-right: 10px;
-                    spacing: 8px;
-                    // What sits left of the words: the shapes hopping when something worked,
-                    // tossing while Flint works, otherwise an icon.
-                    Rectangle {
-                        width: 26px;
-                        if root.toast != "" && !root.toast-failed: Tumble {
-                            mode: 2;
-                            size: 6px;
-                            y: (parent.height - self.height) / 2 + 1px;
-                        }
-                        if root.toast == "" && root.busy: Tumble {
-                            mode: 0;
-                            size: 6px;
-                            y: (parent.height - self.height) / 2 + 1px;
-                        }
-                        if (root.toast-failed && root.toast != "") || (root.toast == "" && !root.busy): RowIcon {
-                            x: 0;
-                            y: (parent.height - self.height) / 2;
-                            source: root.toast == "" ? root.context-icon : @image-url("icons/quit.svg");
-                            tint: root.toast == "" ? root.context-tint : 4;
-                            size: 18px;
-                        }
-                    }
-
-                    Text {
-                        text: root.toast != "" ? root.toast : root.busy ? root.busy-label : root.context-title;
-                        color: root.toast != "" ? Theme.ink : Theme.ink-2;
-                        font-size: 13px;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        horizontal-stretch: 1;
-                    }
-
-                    if root.primary-label != "": Rectangle {
-                        y: 6px;
-                        height: parent.height - 12px;
-                        border-radius: 6px;
-                        background: primary-touch.has-hover ? Theme.raised : transparent;
-                        primary-touch := TouchArea {
-                            clicked => {
-                                root.activate(root.selected, false);
-                            }
-                        }
-
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 6px;
-                            spacing: 8px;
-                            Text {
-                                text: root.primary-label;
-                                color: Theme.ink;
-                                font-size: 13px;
-                                font-weight: 500;
-                                vertical-alignment: center;
-                            }
-
-                            VerticalLayout {
-                                alignment: center;
-                                Keycap {
-                                    label: "↵";
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 20px;
+                                            height: 20px;
+                                            border-radius: 5px;
+                                            background: Theme.panel.with-alpha(0.14);
+                                            Text {
+                                                text: "↵";
+                                                color: Theme.panel;
+                                                font-size: 11px;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-
-                    VerticalLayout {
-                        alignment: center;
+                    if !root.onboarding: HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 10px;
+                        spacing: 8px;
+                        // What sits left of the words: the shapes hopping when something worked,
+                        // tossing while Flint works, otherwise an icon.
                         Rectangle {
-                            width: 1px;
-                            height: 16px;
-                            background: Theme.line;
+                            width: 26px;
+                            if root.toast != "" && !root.toast-failed: Tumble {
+                                mode: 2;
+                                size: 6px;
+                                y: (parent.height - self.height) / 2 + 1px;
+                            }
+                            if root.toast == "" && root.busy: Tumble {
+                                mode: 0;
+                                size: 6px;
+                                y: (parent.height - self.height) / 2 + 1px;
+                            }
+                            if (root.toast-failed && root.toast != "") || (root.toast == "" && !root.busy): RowIcon {
+                                x: 0;
+                                y: (parent.height - self.height) / 2;
+                                source: root.toast == "" ? root.context-icon : @image-url("icons/quit.svg");
+                                tint: root.toast == "" ? root.context-tint : 4;
+                                size: 18px;
+                            }
+                        }
+
+                        Text {
+                            text: root.toast != "" ? root.toast : root.busy ? root.busy-label : root.context-title;
+                            color: root.toast != "" ? Theme.ink : Theme.ink-2;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+
+                        if root.primary-label != "": VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                height: 28px;
+                                border-radius: 6px;
+                                background: primary-touch.has-hover ? Theme.ink.with-alpha(0.08) : transparent;
+                                primary-touch := TouchArea {
+                                    clicked => {
+                                        root.activate(root.selected, false);
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 6px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: root.primary-label;
+                                        color: Theme.ink;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                        vertical-alignment: center;
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Keycap {
+                                            label: "↵";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 1px;
+                                height: 16px;
+                                background: Theme.line;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                height: 28px;
+                                border-radius: 6px;
+                                background: actions-touch.has-hover || root.actions-open ? Theme.ink.with-alpha(0.08) : transparent;
+                                actions-touch := TouchArea {
+                                    clicked => {
+                                        root.toggle-actions();
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 6px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Actions";
+                                        color: Theme.ink-2;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                        vertical-alignment: center;
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 3px;
+                                        padding-top: 4px;
+                                        padding-bottom: 4px;
+                                        Keycap {
+                                            label: root.mod-key;
+                                        }
+
+                                        Keycap {
+                                            label: "K";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.actions-open: TouchArea {
+                clicked => {
+                    root.toggle-actions();
+                }
+            }
+
+            panel := ActionPanel {
+                x: root.width - self.width - 10px;
+                y: root.height - bar-height - self.height - 8px;
+                visible: root.actions-open;
+                actions: root.actions;
+                title: root.actions-title;
+                selected: root.action-selected;
+                query <=> root.action-query;
+                edited(text) => {
+                    root.action-query-edited(text);
+                }
+                hover(i) => {
+                    root.action-hover(i);
+                }
+                run(i) => {
+                    root.action-run(i);
+                }
+            }
+
+            if root.about-open: Rectangle {
+                background: see-through ? Theme.panel.with-alpha(root.panel-opacity) : Theme.panel;
+                TouchArea {
+                    clicked => {
+                        root.close-about();
+                    }
+                }
+
+                Glow { }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    HorizontalLayout {
+                        alignment: center;
+                        Tumble {
+                            mode: 0;
                         }
                     }
 
                     Rectangle {
-                        y: 6px;
-                        height: parent.height - 12px;
-                        border-radius: 6px;
-                        background: actions-touch.has-hover || root.actions-open ? Theme.raised : transparent;
-                        actions-touch := TouchArea {
-                            clicked => {
-                                root.toggle-actions();
-                            }
-                        }
-
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 6px;
-                            spacing: 8px;
-                            Text {
-                                text: "Actions";
-                                color: Theme.ink-2;
-                                font-size: 13px;
-                                font-weight: 500;
-                                vertical-alignment: center;
-                            }
-
-                            HorizontalLayout {
-                                spacing: 3px;
-                                padding-top: 4px;
-                                padding-bottom: 4px;
-                                Keycap {
-                                    label: root.mod-key;
-                                }
-
-                                Keycap {
-                                    label: "K";
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if root.actions-open: TouchArea {
-            clicked => {
-                root.toggle-actions();
-            }
-        }
-
-        panel := ActionPanel {
-            x: root.width - self.width - 10px;
-            y: root.height - 40px - self.height - 8px;
-            visible: root.actions-open;
-            actions: root.actions;
-            title: root.actions-title;
-            selected: root.action-selected;
-            query <=> root.action-query;
-            edited(text) => {
-                root.action-query-edited(text);
-            }
-            hover(i) => {
-                root.action-hover(i);
-            }
-            run(i) => {
-                root.action-run(i);
-            }
-        }
-
-        if root.about-open: Rectangle {
-            background: Theme.panel;
-            TouchArea {
-                clicked => {
-                    root.close-about();
-                }
-            }
-
-            Glow { }
-
-            VerticalLayout {
-                alignment: center;
-                spacing: 6px;
-                HorizontalLayout {
-                    alignment: center;
-                    Tumble {
-                        mode: 0;
-                    }
-                }
-
-                Rectangle {
-                    height: 14px;
-                }
-
-                Text {
-                    text: "Flint";
-                    color: Theme.ink;
-                    font-size: 24px;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                }
-
-                Text {
-                    text: "A keyboard launcher. No web views, nothing sent anywhere.";
-                    color: Theme.ink-2;
-                    font-size: 13px;
-                    horizontal-alignment: center;
-                }
-
-                Text {
-                    text: root.about-detail;
-                    color: Theme.ink-3;
-                    font-size: 12px;
-                    horizontal-alignment: center;
-                }
-
-                Rectangle {
-                    height: 22px;
-                }
-
-                HorizontalLayout {
-                    alignment: center;
-                    spacing: 8px;
-                    Keycap {
-                        label: "Esc";
+                        height: 14px;
                     }
 
                     Text {
-                        text: "to go back";
+                        text: "Flint";
+                        color: Theme.ink;
+                        font-size: 24px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "A keyboard launcher. No web views, nothing sent anywhere.";
+                        color: Theme.ink-2;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: root.about-detail;
                         color: Theme.ink-3;
                         font-size: 12px;
-                        vertical-alignment: center;
+                        horizontal-alignment: center;
                     }
+
+                    Rectangle {
+                        height: 22px;
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        Keycap {
+                            label: "Esc";
+                        }
+
+                        Text {
+                            text: "to go back";
+                            color: Theme.ink-3;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            if root.confirm-open: ConfirmDialog {
+                title: root.confirm-title;
+                message: root.confirm-message;
+                label: root.confirm-label;
+                icon: root.confirm-icon;
+                answer(yes) => {
+                    root.answer(yes);
                 }
             }
         }
 
-        if root.confirm-open: ConfirmDialog {
-            title: root.confirm-title;
-            message: root.confirm-message;
-            label: root.confirm-label;
-            icon: root.confirm-icon;
-            answer(yes) => {
-                root.answer(yes);
-            }
+        // A faint edge, so the window holds its shape over anything.
+        Rectangle {
+            border-radius: corner;
+            border-width: 1px;
+            border-color: Theme.dark ? #ffffff.with-alpha(0.09) : #000000.with-alpha(0.08);
         }
     }
 }

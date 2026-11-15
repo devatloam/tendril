@@ -10,27 +10,42 @@ const SIZE: u32 = 64;
 /// The neutral tint, used when an app has no icon of its own and gets the generic one.
 const FALLBACK_TINT: i32 = 7;
 
-const BUILTIN: &[(&str, &[u8])] = &[
-    ("app", include_bytes!("../ui/icons/app.svg")),
-    ("arrow", include_bytes!("../ui/icons/arrow.svg")),
-    ("bolt", include_bytes!("../ui/icons/bolt.svg")),
-    ("calculator", include_bytes!("../ui/icons/calculator.svg")),
-    ("check", include_bytes!("../ui/icons/check.svg")),
-    ("copy", include_bytes!("../ui/icons/copy.svg")),
-    ("eraser", include_bytes!("../ui/icons/eraser.svg")),
-    ("folder", include_bytes!("../ui/icons/folder.svg")),
-    ("globe", include_bytes!("../ui/icons/globe.svg")),
-    ("link", include_bytes!("../ui/icons/link.svg")),
-    ("lock", include_bytes!("../ui/icons/lock.svg")),
-    ("logout", include_bytes!("../ui/icons/logout.svg")),
-    ("moon", include_bytes!("../ui/icons/moon.svg")),
-    ("open", include_bytes!("../ui/icons/open.svg")),
-    ("palette", include_bytes!("../ui/icons/palette.svg")),
-    ("power", include_bytes!("../ui/icons/power.svg")),
-    ("quit", include_bytes!("../ui/icons/quit.svg")),
-    ("refresh", include_bytes!("../ui/icons/refresh.svg")),
-    ("restart", include_bytes!("../ui/icons/restart.svg")),
-    ("settings", include_bytes!("../ui/icons/settings.svg")),
+/// Flint's own icons (scripts/icons.py draws them): name, outline, and solid for the selected row.
+const BUILTIN: &[(&str, &[u8], &[u8])] = &[
+    ("bolt", include_bytes!("../ui/icons/bolt.svg"), include_bytes!("../ui/icons/bolt-solid.svg")),
+    ("app", include_bytes!("../ui/icons/app.svg"), include_bytes!("../ui/icons/app-solid.svg")),
+    ("lock", include_bytes!("../ui/icons/lock.svg"), include_bytes!("../ui/icons/lock-solid.svg")),
+    ("moon", include_bytes!("../ui/icons/moon.svg"), include_bytes!("../ui/icons/moon-solid.svg")),
+    ("logout", include_bytes!("../ui/icons/logout.svg"), include_bytes!("../ui/icons/logout-solid.svg")),
+    ("restart", include_bytes!("../ui/icons/restart.svg"), include_bytes!("../ui/icons/restart-solid.svg")),
+    ("power", include_bytes!("../ui/icons/power.svg"), include_bytes!("../ui/icons/power-solid.svg")),
+    ("settings", include_bytes!("../ui/icons/settings.svg"), include_bytes!("../ui/icons/settings-solid.svg")),
+    ("refresh", include_bytes!("../ui/icons/refresh.svg"), include_bytes!("../ui/icons/refresh-solid.svg")),
+    ("palette", include_bytes!("../ui/icons/palette.svg"), include_bytes!("../ui/icons/palette-solid.svg")),
+    ("swatch", include_bytes!("../ui/icons/swatch.svg"), include_bytes!("../ui/icons/swatch-solid.svg")),
+    ("quit", include_bytes!("../ui/icons/quit.svg"), include_bytes!("../ui/icons/quit-solid.svg")),
+    ("globe", include_bytes!("../ui/icons/globe.svg"), include_bytes!("../ui/icons/globe-solid.svg")),
+    ("link", include_bytes!("../ui/icons/link.svg"), include_bytes!("../ui/icons/link-solid.svg")),
+    ("calculator", include_bytes!("../ui/icons/calculator.svg"), include_bytes!("../ui/icons/calculator-solid.svg")),
+    ("copy", include_bytes!("../ui/icons/copy.svg"), include_bytes!("../ui/icons/copy-solid.svg")),
+    ("folder", include_bytes!("../ui/icons/folder.svg"), include_bytes!("../ui/icons/folder-solid.svg")),
+    ("open", include_bytes!("../ui/icons/open.svg"), include_bytes!("../ui/icons/open-solid.svg")),
+    ("eraser", include_bytes!("../ui/icons/eraser.svg"), include_bytes!("../ui/icons/eraser-solid.svg")),
+    ("arrow", include_bytes!("../ui/icons/arrow.svg"), include_bytes!("../ui/icons/arrow-solid.svg")),
+    ("check", include_bytes!("../ui/icons/check.svg"), include_bytes!("../ui/icons/check-solid.svg")),
+    ("blur", include_bytes!("../ui/icons/blur.svg"), include_bytes!("../ui/icons/blur-solid.svg")),
+    ("window", include_bytes!("../ui/icons/window.svg"), include_bytes!("../ui/icons/window-solid.svg")),
+    ("opacity", include_bytes!("../ui/icons/opacity.svg"), include_bytes!("../ui/icons/opacity-solid.svg")),
+    ("sparkle", include_bytes!("../ui/icons/sparkle.svg"), include_bytes!("../ui/icons/sparkle-solid.svg")),
+    ("gradient", include_bytes!("../ui/icons/gradient.svg"), include_bytes!("../ui/icons/gradient-solid.svg")),
+    ("resize", include_bytes!("../ui/icons/resize.svg"), include_bytes!("../ui/icons/resize-solid.svg")),
+    ("columns", include_bytes!("../ui/icons/columns.svg"), include_bytes!("../ui/icons/columns-solid.svg")),
+    ("star", include_bytes!("../ui/icons/star.svg"), include_bytes!("../ui/icons/star-solid.svg")),
+    ("number", include_bytes!("../ui/icons/number.svg"), include_bytes!("../ui/icons/number-solid.svg")),
+    ("heading", include_bytes!("../ui/icons/heading.svg"), include_bytes!("../ui/icons/heading-solid.svg")),
+    ("pointer", include_bytes!("../ui/icons/pointer.svg"), include_bytes!("../ui/icons/pointer-solid.svg")),
+    ("login", include_bytes!("../ui/icons/login.svg"), include_bytes!("../ui/icons/login-solid.svg")),
+    ("wave", include_bytes!("../ui/icons/wave.svg"), include_bytes!("../ui/icons/wave-solid.svg")),
 ];
 
 #[derive(Default)]
@@ -40,21 +55,30 @@ pub struct Icons {
 
 impl Icons {
     pub fn builtin(&mut self, name: &str) -> Image {
+        self.drawn(name, false)
+    }
+
+    pub fn builtin_solid(&mut self, name: &str) -> Image {
+        self.drawn(name, true)
+    }
+
+    fn drawn(&mut self, name: &str, solid: bool) -> Image {
         self.loaded
-            .entry(format!("builtin:{name}"))
+            .entry(format!("builtin:{name}:{solid}"))
             .or_insert_with(|| {
-                let svg = BUILTIN.iter().find(|(n, _)| *n == name).map_or(BUILTIN[0].1, |(_, svg)| svg);
-                Image::load_from_svg_data(svg).ok()
+                let (_, outline, filled) = BUILTIN.iter().find(|(n, _, _)| *n == name).unwrap_or(&BUILTIN[1]);
+                Image::load_from_svg_data(if solid { filled } else { outline }).ok()
             })
             .clone()
             .unwrap_or_default()
     }
 
-    /// The image for a row, and the tint to draw it with.
-    pub fn get(&mut self, icon: &Icon, tint: i32) -> (Image, i32) {
+    /// The image for a row, its solid for when the row is selected, and the tint to draw it with.
+    /// An app's own icon is the same either way.
+    pub fn get(&mut self, icon: &Icon, tint: i32) -> (Image, Image, i32) {
         let loaded = match icon {
             Icon::None => None,
-            Icon::Builtin(name) => return (self.builtin(name), tint),
+            Icon::Builtin(name) => return (self.builtin(name), self.builtin_solid(name), tint),
             Icon::File(path) => {
                 let key = path.to_string_lossy().into_owned();
                 self.loaded.entry(key).or_insert_with(|| load_file(path)).clone()
@@ -62,8 +86,8 @@ impl Icons {
             Icon::Shell(name) => self.loaded.entry(name.clone()).or_insert_with(|| load_shell(name)).clone(),
         };
         match loaded {
-            Some(image) => (image, 0),
-            None => (self.builtin("app"), FALLBACK_TINT),
+            Some(image) => (image.clone(), image, 0),
+            None => (self.builtin("app"), self.builtin_solid("app"), FALLBACK_TINT),
         }
     }
 }

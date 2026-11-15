@@ -90,6 +90,11 @@ fn bundle(path: &Path) -> Option<Item> {
     })
 }
 
+/// What launching it opens, for the details pane.
+pub fn describe(launch: &Launch) -> Option<String> {
+    Some(launch.bundle.to_string_lossy().into_owned())
+}
+
 pub fn launch(launch: &Launch) -> io::Result<()> {
     crate::system::spawn("open", &[&launch.bundle.to_string_lossy()])
 }

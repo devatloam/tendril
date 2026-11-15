@@ -2,7 +2,9 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
+mod appearance;
 mod apps;
+mod autostart;
 mod calc;
 mod catalog;
 mod config;
@@ -25,6 +27,7 @@ flint: a keyboard launcher
 
   flint               start, or open the one that's running
   flint --hidden      start without opening the window (for login items)
+  flint --appearance  start, or open the running one, on the Appearance settings
   flint toggle        open or close the running Flint; bind this on Wayland
   flint show | hide
   flint --version
@@ -34,8 +37,13 @@ Settings live in config.toml; \"Flint Settings\" opens it.
 
 fn main() -> ExitCode {
     let mut start_hidden = false;
+    let mut appearance = false;
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
+            "--appearance" => appearance = true,
+            // Started again by the one before it (see app::RESTART): give it a moment to let go of
+            // the hotkey and the socket.
+            "--restarted" => std::thread::sleep(std::time::Duration::from_millis(300)),
             "toggle" | "show" | "hide" => {
                 return match ipc::send(&arg) {
                     Ok(()) => ExitCode::SUCCESS,
@@ -62,7 +70,7 @@ fn main() -> ExitCode {
     }
 
     // Already running: bring that one up instead of starting a second.
-    if ipc::send("show").is_ok() {
+    if ipc::send(if appearance { "appearance" } else { "show" }).is_ok() {
         return ExitCode::SUCCESS;
     }
 
@@ -70,7 +78,23 @@ fn main() -> ExitCode {
     // you're not using it. Set before any thread starts.
     unsafe { std::env::set_var("SLINT_DESTROY_WINDOW_ON_HIDE", "1") };
 
-    match run(start_hidden) {
+    match run(start_hidden, appearance) {
+        Ok(()) if app::RESTART.load(std::sync::atomic::Ordering::SeqCst) => {
+            // Everything above has been dropped; start the next Flint and leave.
+            let me = std::env::current_exe().ok();
+            let args: &[&str] = if app::RESTART_TO_APPEARANCE.load(std::sync::atomic::Ordering::SeqCst) {
+                &["--restarted", "--appearance"]
+            } else {
+                &["--restarted"]
+            };
+            match me.map(|me| std::process::Command::new(me).args(args).spawn()) {
+                Some(Ok(_)) => ExitCode::SUCCESS,
+                _ => {
+                    eprintln!("flint: couldn't start again; start Flint yourself");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("flint: {e}");
@@ -79,11 +103,12 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(start_hidden: bool) -> Result<(), Box<dyn std::error::Error>> {
-    select_backend()?;
+fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let config = config::load();
+    select_backend(config.appearance.blur)?;
     let ui = Launcher::new()?;
     ui.set_frameless(!cfg!(target_os = "macos"));
-    let app = App::install(&ui, config::load());
+    let app = App::install(&ui, config);
     window::watch(&ui);
     app.rescan(false);
 
@@ -99,6 +124,10 @@ fn run(start_hidden: bool) -> Result<(), Box<dyn std::error::Error>> {
                     "toggle" => window::toggle(&ui),
                     "show" => window::show(&ui),
                     "hide" => window::hide(&ui),
+                    "appearance" => {
+                        window::show(&ui);
+                        app.open_appearance();
+                    }
                     _ => {}
                 }
             })
@@ -109,6 +138,9 @@ fn run(start_hidden: bool) -> Result<(), Box<dyn std::error::Error>> {
         println!("flint: running; press {} to open", app.config.borrow().hotkey);
     } else {
         window::show(&ui);
+        if appearance {
+            app.open_appearance();
+        }
     }
     slint::run_event_loop_until_quit()?;
     app.closing();
@@ -117,12 +149,32 @@ fn run(start_hidden: bool) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// winit with the CPU renderer: no GPU context and its driver memory, and plenty fast for a
-/// window this size since only what changed is redrawn.
-fn select_backend() -> Result<(), slint::PlatformError> {
+/// window this size since only what changed is redrawn. A see-through window needs the GPU
+/// renderer everywhere but X11, so that's used when blur is on there; if it can't start (no
+/// OpenGL), Flint falls back to the CPU and a solid window.
+fn select_backend(blur: bool) -> Result<(), slint::PlatformError> {
+    let gpu = blur && window::needs_gpu_for_blur();
+    let wanted = std::env::var("FLINT_RENDERER").unwrap_or_else(|_| if gpu { "femtovg" } else { "software" }.into());
+    match selector(&wanted).select() {
+        Ok(()) => {
+            let gpu = wanted != "software";
+            window::set_renderer(gpu, gpu || !window::needs_gpu_for_blur());
+            Ok(())
+        }
+        Err(e) if wanted != "software" => {
+            eprintln!("flint: couldn't draw with the GPU ({e}); using a solid window");
+            window::set_renderer(false, !window::needs_gpu_for_blur());
+            selector("software").select()
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn selector(renderer: &str) -> slint::BackendSelector {
     #[allow(unused_mut)]
     let mut selector = slint::BackendSelector::new()
         .backend_name("winit".into())
-        .renderer_name("software".into())
+        .renderer_name(renderer.into())
         .with_winit_window_attributes_hook(window::attributes);
     #[cfg(target_os = "macos")]
     {
@@ -132,5 +184,5 @@ fn select_backend() -> Result<(), slint::PlatformError> {
         builder.with_activation_policy(ActivationPolicy::Accessory);
         selector = selector.with_winit_event_loop_builder(builder);
     }
-    selector.select()
+    selector
 }

@@ -22,32 +22,145 @@ fn pressed() {
 pub struct Hotkeys {
     backend: Option<Backend>,
     current: RefCell<Option<String>>,
+    paused: std::cell::Cell<bool>,
 }
 
 impl Hotkeys {
     pub fn new() -> Hotkeys {
         let backend =
             Backend::new().map_err(|e| eprintln!("flint: no global hotkey here ({e}); bind `flint toggle` to a key instead")).ok();
-        Hotkeys { backend, current: RefCell::new(None) }
+        Hotkeys { backend, current: RefCell::new(None), paused: std::cell::Cell::new(false) }
     }
 
-    /// Takes `text` ("Alt+Space"), letting go of the previous keys if they changed.
+    /// Whether there's a global key to take here at all (not on Wayland).
+    pub fn available(&self) -> bool {
+        self.backend.is_some()
+    }
+
+    /// Takes `text` ("Alt+Space"), letting go of the previous keys if they changed. A broken
+    /// setting is reported once, not on every open.
     pub fn set(&self, text: &str) {
-        let Some(backend) = &self.backend else { return };
         if self.current.borrow().as_deref() == Some(text) {
             return;
         }
-        // Remembered even when it fails, so a broken setting is reported once, not on every open.
-        *self.current.borrow_mut() = Some(text.to_string());
-        let hotkey: HotKey = match text.parse() {
-            Ok(h) => h,
-            Err(e) => return eprintln!("flint: hotkey \"{text}\" isn't one I understand ({e})"),
-        };
-        if let Err(e) = backend.set(hotkey) {
-            eprintln!("flint: couldn't take {text} ({e}); another app may be using it");
+        if let Err(e) = self.change(text) {
+            eprintln!("flint: couldn't take {text} ({e})");
+        }
+    }
+
+    /// Takes `text` now, saying why not if it can't; the keys held before are kept then.
+    pub fn change(&self, text: &str) -> Result<(), String> {
+        let Some(backend) = &self.backend else { return Err("there's no global key to take here".into()) };
+        let hotkey: HotKey = text.parse().map_err(|e| format!("\"{text}\" isn't a key I understand ({e})"))?;
+        let before = self.current.replace(Some(text.to_string()));
+        // Taken even while paused, to find out now whether another app holds them; then let go
+        // again until the pause ends.
+        let taken = backend.set(hotkey);
+        if taken.is_ok() && self.paused.get() {
+            backend.clear();
+        }
+        if let Err(e) = taken {
+            // Put the old keys back.
+            if let Some(old) = before.as_deref().and_then(|t| t.parse::<HotKey>().ok()) {
+                let _ = backend.set(old);
+            }
+            *self.current.borrow_mut() = before;
+            return Err(format!("another app is using those keys ({e})"));
+        }
+        Ok(())
+    }
+
+    /// Lets go of the keys for a while, so you can press them to record new ones.
+    pub fn pause(&self) {
+        if !self.paused.replace(true)
+            && let Some(backend) = &self.backend
+        {
+            backend.clear();
+        }
+    }
+
+    pub fn resume(&self) {
+        if self.paused.replace(false)
+            && let (Some(backend), Some(text)) = (&self.backend, self.current.borrow().clone())
+            && let Ok(hotkey) = text.parse::<HotKey>()
+        {
+            let _ = backend.set(hotkey);
         }
     }
 }
+
+/// The shortcut for a key press from the window, as config.toml spells it ("Ctrl+Shift+Space"),
+/// or None if it isn't one: it needs Ctrl, Alt or Super, except a function key on its own.
+/// On macOS Slint reports ⌘ as `control` and Control as `meta`.
+pub fn shortcut(text: &str, control: bool, alt: bool, shift: bool, meta: bool) -> Option<String> {
+    let (cmd, ctrl) = if cfg!(target_os = "macos") { (control, meta) } else { (meta, control) };
+    let key = key_name(text)?;
+    let function = key.starts_with('F') && key.len() > 1 && key[1..].chars().all(|c| c.is_ascii_digit());
+    if !(ctrl || alt || cmd || function) {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if ctrl {
+        parts.push("Ctrl");
+    }
+    if alt {
+        parts.push("Alt");
+    }
+    if shift {
+        parts.push("Shift");
+    }
+    if cmd {
+        parts.push(if cfg!(target_os = "macos") { "Cmd" } else { "Super" });
+    }
+    let combo = parts.into_iter().map(str::to_string).chain([key]).collect::<Vec<_>>().join("+");
+    combo.parse::<HotKey>().ok().map(|_| combo)
+}
+
+fn key_name(text: &str) -> Option<String> {
+    let mut chars = text.chars();
+    let c = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    Some(match c {
+        'a'..='z' | 'A'..='Z' => format!("Key{}", c.to_ascii_uppercase()),
+        '0'..='9' => format!("Digit{c}"),
+        ' ' => "Space".into(),
+        ',' => "Comma".into(),
+        '.' => "Period".into(),
+        '/' => "Slash".into(),
+        ';' => "Semicolon".into(),
+        '\'' => "Quote".into(),
+        '[' => "BracketLeft".into(),
+        ']' => "BracketRight".into(),
+        '\\' => "Backslash".into(),
+        '-' => "Minus".into(),
+        '=' => "Equal".into(),
+        '`' => "Backquote".into(),
+        // Slint's function keys, F1 to F12.
+        '\u{F704}'..='\u{F70F}' => format!("F{}", c as u32 - 0xF704 + 1),
+        _ => return None,
+    })
+}
+
+/// The keys of a shortcut as they're shown on keycaps: "Ctrl+Shift+KeyK" is Ctrl, Shift, K.
+pub fn keycaps(combo: &str) -> Vec<String> {
+    let mac = cfg!(target_os = "macos");
+    combo
+        .split('+')
+        .map(|part| {
+            let p = part.trim();
+            match p.to_lowercase().as_str() {
+                "ctrl" | "control" => if mac { "⌃" } else { "Ctrl" }.to_string(),
+                "alt" | "option" => if mac { "⌥" } else { "Alt" }.to_string(),
+                "shift" => if mac { "⇧" } else { "Shift" }.to_string(),
+                "super" | "meta" | "cmd" | "command" => if mac { "⌘" } else { "Super" }.to_string(),
+                _ => p.strip_prefix("Key").or_else(|| p.strip_prefix("Digit")).unwrap_or(p).to_string(),
+            }
+        })
+        .collect()
+}
+
 
 #[cfg(not(target_os = "linux"))]
 struct Backend {
@@ -68,10 +181,14 @@ impl Backend {
         Ok(Backend { manager, current: RefCell::new(None) })
     }
 
-    fn set(&self, hotkey: HotKey) -> Result<(), String> {
+    fn clear(&self) {
         if let Some(old) = self.current.take() {
             let _ = self.manager.unregister(old);
         }
+    }
+
+    fn set(&self, hotkey: HotKey) -> Result<(), String> {
+        self.clear();
         self.manager.register(hotkey).map_err(|e| e.to_string())?;
         *self.current.borrow_mut() = Some(hotkey);
         Ok(())
@@ -121,6 +238,17 @@ mod x11 {
             Ok(Backend { conn, root, grabbed })
         }
 
+        pub fn clear(&self) {
+            if let Ok(mut grabbed) = self.grabbed.lock()
+                && let Some((code, old)) = grabbed.take()
+            {
+                for lock in LOCKS {
+                    let _ = self.conn.ungrab_key(code, self.root, ModMask::from(old | lock));
+                }
+                let _ = self.conn.flush();
+            }
+        }
+
         pub fn set(&self, hotkey: HotKey) -> Result<(), String> {
             let keysym = keysym(hotkey.key).ok_or("that key isn't supported yet")?;
             let keycode = self.keycode(keysym).ok_or("no key on this keyboard makes that")?;
@@ -132,11 +260,19 @@ mod x11 {
                 }
             }
             for lock in LOCKS {
-                self.conn
+                let grab = self
+                    .conn
                     .grab_key(false, self.root, ModMask::from(mods | lock), keycode, GrabMode::ASYNC, GrabMode::ASYNC)
-                    .map_err(|e| e.to_string())?
-                    .check()
-                    .map_err(|e| format!("{e:?}"))?;
+                    .map_err(|e| e.to_string())
+                    .and_then(|cookie| cookie.check().map_err(|e| format!("{e:?}")));
+                if let Err(e) = grab {
+                    // Another app holds them: let go of the variants already taken.
+                    for lock in LOCKS {
+                        let _ = self.conn.ungrab_key(keycode, self.root, ModMask::from(mods | lock));
+                    }
+                    let _ = self.conn.flush();
+                    return Err(e);
+                }
             }
             *grabbed = Some((keycode, mods));
             Ok(())
@@ -222,5 +358,24 @@ mod x11 {
             Backslash => 0x5c,
             _ => return None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shortcuts_from_key_presses() {
+        let ctrl = !cfg!(target_os = "macos");
+        assert_eq!(shortcut(" ", false, true, false, false).as_deref(), Some("Alt+Space"));
+        assert_eq!(shortcut("k", ctrl, false, true, !ctrl).as_deref(), Some("Ctrl+Shift+KeyK"));
+        assert_eq!(shortcut("\u{F70B}", false, false, false, false).as_deref(), Some("F8"));
+        assert_eq!(shortcut("k", false, false, false, false), None, "a plain letter is typing, not a shortcut");
+        assert_eq!(shortcut("k", false, false, true, false), None);
+        if !cfg!(target_os = "macos") {
+            assert_eq!(keycaps("Ctrl+Shift+KeyK"), ["Ctrl", "Shift", "K"]);
+            assert_eq!(keycaps("Alt+Space"), ["Alt", "Space"]);
+        }
     }
 }

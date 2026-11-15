@@ -264,7 +264,11 @@ mod tests {
         let usage = Usage::default();
         assert!(titles("shut", &usage).iter().all(|t| t == "Shut Down"), "{:?}", titles("shut", &usage));
         assert!(titles("calc", &usage).is_empty(), "{:?}", titles("calc", &usage));
-        assert_eq!(titles("colo", &usage).len(), crate::palettes::PALETTES.len());
+        // Every palette, by its description; on Windows the Settings app's Colors pages come too.
+        let colours = titles("colo", &usage);
+        for p in crate::palettes::PALETTES {
+            assert!(colours.iter().any(|t| t.contains(p.name)), "{} missing from {colours:?}", p.name);
+        }
     }
 
     #[test]

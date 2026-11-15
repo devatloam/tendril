@@ -227,7 +227,8 @@ mod tests {
         assert_eq!(label("theme"), "System");
         assert_eq!(label("blur"), if crate::window::needs_gpu_for_blur() { "Off" } else { "On" });
         assert_eq!(label("opacity"), "78%");
-        assert_eq!(label("glow"), "Still");
+        // Off to start with on Windows, which has its own look (config.rs).
+        assert_eq!(label("glow"), if cfg!(windows) { "Off" } else { "Still" });
         assert_eq!(label("favourites"), "Grid");
         assert_eq!(label("size"), "Regular");
     }

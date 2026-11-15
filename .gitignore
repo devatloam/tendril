@@ -1,1 +1,190 @@
-/target
+
+# ==========================================
+# Rust
+# ==========================================
+
+/target/
+**/target/
+Cargo.toml.orig
+Cargo.lock.orig
+*.rs.bk
+*.pdb
+*.dSYM/
+*.profraw
+*.profdata
+
+# Rust analyzer
+rust-project.json
+
+# ==========================================
+# Slint
+# ==========================================
+
+slint-build/
+**/slint-build/
+
+# ==========================================
+# Bun / Node.js
+# ==========================================
+
+node_modules/
+.bun/
+bun.lockb
+
+# Build output
+dist/
+build/
+out/
+.next/
+.nuxt/
+.output/
+.turbo/
+.vercel/
+
+# ==========================================
+# Environment & secrets
+# ==========================================
+
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+secrets/
+.secrets/
+
+# ==========================================
+# Logs & debugging
+# ==========================================
+
+*.log
+logs/
+log/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+bun-debug.log*
+*.stackdump
+core
+core.*
+
+# ==========================================
+# Temporary files
+# ==========================================
+
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.old
+*.orig~
+*.cache
+.tmp/
+.temp/
+.cache/
+.tempfiles/
+
+# ==========================================
+# IDEs & editors
+# ==========================================
+
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+*.sublime-workspace
+*.sublime-project
+*.code-workspace
+
+# ==========================================
+# Operating systems
+# ==========================================
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100/
+.Trashes/
+.fseventsd/
+
+# Linux
+*~
+.directory
+.Trash-*
+.nfs*
+
+# ==========================================
+# Python (scripts)
+# ==========================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ==========================================
+# Packaging & installers
+# ==========================================
+
+*.exe
+*.msi
+*.msix
+*.app/
+*.dmg
+*.pkg
+*.deb
+*.rpm
+*.AppImage
+*.tar.gz
+*.zip
+
+# ==========================================
+# Test & coverage output
+# ==========================================
+
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+
+# ==========================================
+# Crash dumps
+# ==========================================
+
+*.dmp
+*.dump
+*.core
+
+# ==========================================
+# Local configuration
+# ==========================================
+
+*.local
+*.local.*
+.local/

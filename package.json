@@ -7,5 +7,9 @@
     "bump": "bun scripts/release.ts bump",
     "release-notes": "bun scripts/release.ts notes",
     "test": "bun test scripts"
+  },
+  "dependencies": {
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.6"
   }
 }

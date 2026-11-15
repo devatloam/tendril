@@ -15,8 +15,11 @@
 //       or one whose commits don't tell the story).
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const MAX_HIGHLIGHTS = 7;
 const KEEP_NIGHTLIES = 10;
 
@@ -188,9 +191,11 @@ export function releaseNotes(o: {
 // ── git ─────────────────────────────────────────────────────────────────────────────────────
 
 function git(...args: string[]): string {
-  const result = Bun.spawnSync(["git", ...args], { cwd: ROOT, stderr: "pipe" });
-  if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr.toString().trim()}`);
-  return result.stdout.toString().trim();
+  const result = spawnSync("git", args, { cwd: ROOT, encoding: "utf8" });
+  if (result.error || result.status !== 0) {
+    throw new Error(`git ${args.join(" ")}: ${(result.stderr || result.error?.message || "").trim()}`);
+  }
+  return result.stdout.trim();
 }
 
 const tags = () => git("tag", "--list").split("\n").filter(Boolean);
@@ -209,7 +214,7 @@ function commitsBetween(from: string | undefined, to: string): Commit[] {
 }
 
 function cargoVersion(): Version {
-  const toml = readFileSync(`${ROOT}Cargo.toml`, "utf8");
+  const toml = readFileSync(join(ROOT, "Cargo.toml"), "utf8");
   const text = /^\[package\][^[]*?^version\s*=\s*"([^"]+)"/m.exec(toml)?.[1];
   const version = text && parseVersion(text);
   if (!version) throw new Error("no version in Cargo.toml's [package]");
@@ -218,10 +223,10 @@ function cargoVersion(): Version {
 
 function setCargoVersion(from: Version, to: Version) {
   const [old, next] = [formatVersion(from), formatVersion(to)];
-  const tomlPath = `${ROOT}Cargo.toml`;
+  const tomlPath = join(ROOT, "Cargo.toml");
   const toml = readFileSync(tomlPath, "utf8");
   writeFileSync(tomlPath, toml.replace(/^(\[package\][^[]*?^version\s*=\s*)"[^"]+"/m, `$1"${next}"`));
-  const lockPath = `${ROOT}Cargo.lock`;
+  const lockPath = join(ROOT, "Cargo.lock");
   if (existsSync(lockPath)) {
     const lock = readFileSync(lockPath, "utf8");
     const entry = `name = "tendril"\nversion = "${old}"`;
@@ -248,7 +253,7 @@ function notes(tag: string, ref: string, repo?: string): string {
   const version = parseVersion(tag);
   if (!version) throw new Error(`${tag} isn't a version tag`);
   const previous = previousTag(tag, tags());
-  const written = `${ROOT}notes/${tag}.md`;
+  const written = join(ROOT, "notes", `${tag}.md`);
   return releaseNotes({
     written: existsSync(written) ? readFileSync(written, "utf8") : undefined,
     version: formatVersion(version),
@@ -304,7 +309,7 @@ export function staleNightlies(all: string[], keep = KEEP_NIGHTLIES): string[] {
 }
 
 if (import.meta.main) {
-  const [command, ...rest] = Bun.argv.slice(2);
+  const [command, ...rest] = process.argv.slice(2);
   const f = flags(rest);
   try {
     switch (command) {

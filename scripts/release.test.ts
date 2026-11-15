@@ -59,3 +59,14 @@ test("release notes: header, highlights, the rest counted, everything folded", (
   expect(notes).toContain("https://github.com/devatloam/tendril/compare/v0.1.0...v0.2.0");
   expect(notes).not.toContain("Release v0.1.1");
 });
+
+test("hand-written notes replace the bullets but keep the header and changelog", () => {
+  const notes = releaseNotes({
+    version: "0.1.0",
+    tag: "v0.1.0",
+    commits: [{ sha: "abcdef1", subject: "Initial commit", body: "", author: "Ada" }],
+    written: "- **A launcher.** It opens.\n",
+  });
+  expect(notes).toStartWith("**v0.1.0** · 1 change from 1 contributor\n\n- **A launcher.** It opens.\n\n<details>");
+  expect(notes).toContain("- Initial commit (abcdef1) by Ada");
+});

@@ -232,7 +232,8 @@ reading about (up to seven, with the first sentence of the commit message's pros
 ("Plus 3 more bug fixes"), and every commit folded under "Full changelog". Commits starting with `fix:` are counted as
 fixes; `docs:`, `chore:`, `ci:`, `test:`, `build:`, `style:` and `refactor:` are listed in the full changelog only.
 T3 Code has a model write its bullets; these come straight from the commit messages, so a clear subject line is the
-changelog.
+changelog. When the commits don't tell the story (a first release, say), write `notes/v1.2.3.md` before bumping: it
+replaces the bullets, and the header and full changelog stay.
 
 ### Starting at login
 

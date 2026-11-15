@@ -78,6 +78,7 @@ There's no window manager, so give the window keyboard focus yourself (python-xl
   never `CARGO_PKG_VERSION`. `build.yml` does the building and packaging for both.
 - Release notes come from commit messages (T3 Code's layout): the subject is the bullet, the first sentence of a prose
   body is its detail, `fix:` counts as a fix, `docs:`/`chore:`/`ci:`/`test:`/`build:`/`style:`/`refactor:` only appear in
-  the folded full changelog. Write subjects as what someone using Tendril gets.
+  the folded full changelog. Write subjects as what someone using Tendril gets. `notes/vX.Y.Z.md`, if present, replaces the
+  bullets for that release.
 - Version order (src/update.rs `compare`, scripts/release.ts `compareVersions`) must agree: a preview of 0.2.1 sorts
   after 0.2.0 and before 0.2.1.

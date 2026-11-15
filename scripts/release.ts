@@ -11,6 +11,8 @@
 //   bun scripts/release.ts notes --tag v1.2.3 [--ref HEAD] [--repo owner/name] [--output notes.md]
 //       Release notes in the same shape as T3 Code's: a header with the counts, the changes that
 //       matter as bullets, a count of the rest, and every commit folded under "Full changelog".
+//       notes/<tag>.md, if it exists, replaces the bullets with your own words (a first release,
+//       or one whose commits don't tell the story).
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
@@ -140,6 +142,8 @@ export function releaseNotes(o: {
   previous?: string;
   tag: string;
   nightlyOf?: string;
+  /** Hand-written bullets (notes/<tag>.md), used in place of the ones made from commits. */
+  written?: string;
 }): string {
   const commits = o.commits.filter(counted);
   const people = new Set(commits.map((c) => c.author).filter((a) => !BOTS.test(a)).map((a) => a.toLowerCase()));
@@ -156,7 +160,9 @@ export function releaseNotes(o: {
   const rest = features.length - shown.length;
   const fixWord = fixes.length === 1 ? "bug fix" : "bug fixes";
   let summary = bullets.join("\n");
-  if (bullets.length && (rest || fixes.length)) {
+  if (o.written?.trim()) {
+    summary = o.written.trim();
+  } else if (bullets.length && (rest || fixes.length)) {
     const parts = [];
     if (rest) parts.push(`${rest} more ${rest === 1 ? "change" : "changes"}`);
     if (fixes.length) parts.push(`${fixes.length}${rest ? "" : " more"} ${fixWord}`);
@@ -242,7 +248,9 @@ function notes(tag: string, ref: string, repo?: string): string {
   const version = parseVersion(tag);
   if (!version) throw new Error(`${tag} isn't a version tag`);
   const previous = previousTag(tag, tags());
+  const written = `${ROOT}notes/${tag}.md`;
   return releaseNotes({
+    written: existsSync(written) ? readFileSync(written, "utf8") : undefined,
     version: formatVersion(version),
     tag,
     previous,

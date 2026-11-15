@@ -16,7 +16,7 @@ pub struct Config {
     pub onboarded: bool,
     /// "auto" installs new versions, "notify" offers them, "off" never asks GitHub.
     pub updates: String,
-    /// Preview versions, built from every change before a release: "ask" offers the newest one
+    /// Preview versions, built nightly from main before a release: "ask" offers the newest one
     /// beside updates, "always" follows them, "never" stays on releases.
     pub previews: String,
     /// Keep what you copy, for Clipboard History.
@@ -179,7 +179,7 @@ onboarded = false
 # GitHub for the latest release, every six hours while it runs.
 updates = "auto"
 
-# Preview versions are built from every change, before it's in a release, so they get new things
+# Preview versions are built every night from the newest changes, before they're in a release, so they get new things
 # first and can be rough. "ask" offers the newest one beside updates, "always" installs them as
 # they come (and the next release once it's newer), "never" sticks to releases.
 previews = "ask"

@@ -1,0 +1,102 @@
+name: Nightly
+
+# Once a night, the newest commit on main that passed its checks (check.yml) is built and
+# published as a prerelease named like v0.2.1-nightly.20261115.42, which Tendril installs for
+# anyone with "Preview versions" on. A night with nothing new since the last nightly or release
+# publishes nothing, so changes pile up between nightlies rather than each getting its own, the
+# way T3 Code does it. "Run workflow" in the Actions tab makes one now.
+on:
+  schedule:
+    # Not on the hour, when GitHub's scheduled jobs are busiest.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    if: github.repository == 'devatloam/tendril'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # To read which commits passed check.yml.
+      actions: read
+    outputs:
+      due: ${{ steps.decide.outputs.due }}
+      sha: ${{ steps.decide.outputs.sha }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - id: decide
+        name: Is a nightly due?
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh run list --workflow check.yml --branch main --event push --status success --limit 1 --json headSha --jq '.[0].headSha // ""')
+          if [ -z "$sha" ]; then
+            echo "No commit on main has passed its checks yet."; echo "due=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          shipped=$(git tag --contains "$sha" --list 'v*')
+          if [ -n "$shipped" ]; then
+            echo "$sha is already in $(echo $shipped | tr '\n' ' '); nothing new."; echo "due=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git checkout --quiet "$sha"
+          version=$(bun scripts/release.ts nightly-version --run "$GITHUB_RUN_NUMBER")
+          echo "Building $version from $sha."
+          { echo "due=true"; echo "sha=$sha"; echo "version=$version"; } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: decide
+    if: needs.decide.outputs.due == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.decide.outputs.version }}
+      ref: ${{ needs.decide.outputs.sha }}
+
+  publish:
+    needs: [decide, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.decide.outputs.version }}
+      SHA: ${{ needs.decide.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.decide.outputs.sha }}
+          # Notes count from the previous nightly's tag.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Release notes
+        run: |
+          bun scripts/release.ts notes --tag "v$VERSION" --ref "$SHA" --repo "$GITHUB_REPOSITORY" --output notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish
+        run: |
+          gh release create "v$VERSION" dist/* --target "$SHA" --prerelease --latest=false \
+            --title "Tendril $VERSION" --notes-file notes.md
+      # Only the newest few nightlies are kept; anyone on previews has moved past the rest.
+      - name: Prune old nightlies
+        run: |
+          git fetch --tags --force --quiet
+          for tag in $(bun scripts/release.ts stale-nightlies); do
+            gh release delete "$tag" --cleanup-tag --yes || true
+          done

@@ -28,13 +28,14 @@ replace itself.
 
 ### Preview versions
 
-Every change to main is built and published as a nightly, a prerelease named like `v0.2.1-nightly.20261115.42`: the
-next version, then what kind of preview it is, the day and the build number. They get new things first and can be
+Once a night, if main has changed since the last one, the newest commit that passed its checks is built and published
+as a nightly: a prerelease named like `v0.2.1-nightly.20261115.42`, the next version, then what kind of preview it is,
+the day and the build number. Changes pile up between nightlies rather than each getting its own, as T3 Code does it. They get new things first and can be
 rough. When there's one newer than what you have, the Update section at the top of the list offers "Install Preview
 Version?"; taking it switches you to previews, and Tendril installs each new one as it comes. A preview sorts before the
 release it leads up to, so once 0.2.1 itself is out you move on to it. Appearance → Preview versions sets this to Ask,
 Always or Never ("Don't Offer Previews" in the row's actions does the same as Never). Only the ten newest nightlies are
-kept.
+kept, about ten days' worth.
 
 ![Tendril, see-through over a busy desktop](docs/glass.png)
 
@@ -227,7 +228,8 @@ bun run bump minor --push      # 0.1.4 → 0.2.0: sets Cargo.toml and Cargo.lock
 prints the push command. The tag starts `release.yml`, which builds every system and publishes the release the updater
 offers. Where tags can't be pushed (Claude's cloud sessions refuse them), push the bump commit to main and run the
 Release workflow instead, from the Actions tab or with `gh workflow run release.yml --ref main`: it checks the version
-in Cargo.toml and makes the tag itself. Nightlies need nothing: `check.yml` publishes one after every push to main that passes its checks.
+in Cargo.toml and makes the tag itself. Nightlies need nothing: `nightly.yml` builds the newest commit on main that passed
+its checks once a night (03:17 UTC), and skips nights with nothing new. Its "Run workflow" button makes one now.
 
 Release notes follow T3 Code's: a header with the number of changes and contributors, a bullet for each change worth
 reading about (up to seven, with the first sentence of the commit message's prose), a count of what's left
@@ -284,7 +286,7 @@ fonts/           Geist (SIL Open Font License)
 assets/          Tendril's app icon, as SVG, PNG, ICO and ICNS
 packaging/       what goes into a release besides the binary: the Linux menu entry and installer, the macOS Info.plist
 scripts/         icons.py draws ui/icons/; release.ts versions, bumps and writes release notes (bun run bump)
-.github/         check.yml on every push, and a nightly from main; release.yml on a version tag; build.yml for both
+.github/         check.yml on every push; nightly.yml once a night; release.yml on a version tag or by hand; build.yml for both
 ```
 
 Things that keep it light, if you're changing it:

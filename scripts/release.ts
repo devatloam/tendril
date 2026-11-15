@@ -172,7 +172,7 @@ export function releaseNotes(o: {
   }
 
   const intro = o.nightlyOf
-    ? `> Nightly build of \`${o.nightlyOf.slice(0, 7)}\`, made from every change to main before it's in a release. ` +
+    ? `> Nightly build of \`${o.nightlyOf.slice(0, 7)}\`, built from main's newest changes before they're in a release. ` +
       `It can be rough. Turn on **Preview versions** in Tendril (search for "Appearance") to get these as they come.`
     : "";
 

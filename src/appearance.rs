@@ -160,7 +160,7 @@ pub fn settings(config: &Config) -> Vec<Setting> {
     add(
         "previews",
         "Preview versions",
-        "Built from every change, before a release",
+        "Built every night from the newest changes",
         "flask",
         7,
         None,

@@ -4,7 +4,7 @@
 //! version starts the next time Tendril does.
 //!
 //! There are two kinds of release. Versions like 0.2.0 come from a tag (`bun run bump`).
-//! Previews like 0.2.1-nightly.20261115.42 are built by CI from every change to main and
+//! Previews like 0.2.1-nightly.20261115.42 are built each night from main (nightly.yml) and
 //! published as prereleases; anything after the `-` names the kind. Preview versions sort before
 //! the release they lead up to, so someone on previews moves on to that release when it's out.
 //!

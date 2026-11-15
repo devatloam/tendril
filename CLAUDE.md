@@ -71,13 +71,22 @@ There's no window manager, so give the window keyboard focus yourself (python-xl
 
 ## Releasing
 
-- `bun run bump patch|minor|major [--push]` (scripts/release.ts) sets Cargo.toml and Cargo.lock, commits
-  "Release vX.Y.Z" and tags it. The tag starts `.github/workflows/release.yml`. Don't edit the version by hand.
-  Cloud sessions can't push tags (the git proxy answers 403): push the bump commit to main instead and dispatch the
-  Release workflow on main (GitHub tools, `actions_run_trigger`); it makes the tag itself.
-- Every push to main that passes `check.yml` is published as a nightly prerelease, `vX.Y.Z-nightly.<date>.<run>`, where
-  X.Y.Z is the next patch after the last release. CI passes the version in `TENDRIL_VERSION`; use `update::VERSION`,
-  never `CARGO_PKG_VERSION`. `build.yml` does the building and packaging for both.
+- `bun run bump patch|minor|major` (scripts/release.ts) sets Cargo.toml and Cargo.lock, commits "Release vX.Y.Z" and
+  tags it. Don't edit the version by hand. `--dry-run` shows the version and notes without changing anything.
+- A release is published by `.github/workflows/release.yml`, started in one of three ways:
+  1. **Push the tag** (on your own machine): `bun run bump minor --push`, or `git push --atomic origin HEAD vX.Y.Z`.
+  2. **Run the workflow from GitHub**, where tags can't be pushed: delete the local tag (`git tag -d vX.Y.Z`), push the
+     bump commit to main, then Actions → Release → Run workflow on main, or `gh workflow run release.yml --ref main`.
+     It checks Cargo.toml holds the version and that it isn't released yet, then makes the tag itself.
+  3. **From a Claude cloud session**: tag pushes are refused there (the git proxy answers 403 on any tag, whatever
+     permission was given), so do 2 with the GitHub tools: push the bump commit to main, then `actions_run_trigger`
+     with `run_workflow`, `workflow_id: release.yml`, `ref: main` and `inputs: {"version": "X.Y.Z"}`. Don't retry the
+     tag push.
+- Nightlies come from `.github/workflows/nightly.yml`, once a night (03:17 UTC) or by "Run workflow": the newest commit
+  on main that passed `check.yml`, skipped when it's already in a nightly or release, published as a prerelease
+  `vX.Y.Z-nightly.<date>.<run>` where X.Y.Z is the next patch after the last release. CI passes the version in
+  `TENDRIL_VERSION`; use `update::VERSION`, never `CARGO_PKG_VERSION`. `build.yml` builds and packages for both, with the
+  same release profile.
 - Release notes come from commit messages (T3 Code's layout): the subject is the bullet, the first sentence of a prose
   body is its detail, `fix:` counts as a fix, `docs:`/`chore:`/`ci:`/`test:`/`build:`/`style:`/`refactor:` only appear in
   the folded full changelog. Write subjects as what someone using Tendril gets. `notes/vX.Y.Z.md`, if present, replaces the

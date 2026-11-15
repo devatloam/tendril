@@ -1,7 +1,7 @@
 name: Build
 
-# Builds and packages every system for one version. Called by check.yml for nightlies and by
-# release.yml for releases, so both ship the same files.
+# Builds and packages every system for one version. Called by nightly.yml and release.yml, so
+# nightlies and releases ship the same files, built the same way.
 on:
   workflow_call:
     inputs:
@@ -9,6 +9,11 @@ on:
         description: "The version to build, like 0.2.0 or 0.2.1-nightly.20261115.42"
         required: true
         type: string
+      ref:
+        description: "The commit to build; the one that started the workflow if empty"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -27,6 +32,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

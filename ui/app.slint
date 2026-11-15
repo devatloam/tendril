@@ -1,0 +1,411 @@
+import "../fonts/Geist-Regular.ttf";
+import "../fonts/Geist-Medium.ttf";
+import "../fonts/Geist-SemiBold.ttf";
+import { Palette } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Row, ActionRow, Keycap, RowIcon, SectionRow, ItemRow, CalcRow, ActionPanel, ConfirmDialog } from "parts.slint";
+
+export { Theme, Row, ActionRow }
+
+export component Launcher inherits Window {
+    title: "Flint";
+    width: 750px;
+    height: 474px;
+    no-frame: frameless;
+    always-on-top: true;
+    background: Theme.panel;
+    default-font-family: "Geist";
+    default-font-size: 14px;
+    forward-focus: search;
+
+    // The list. Rust lays it out (each row's y and height) and keeps `selected` on an item.
+    in property <[Row]> rows;
+    in property <length> rows-height;
+    in-out property <int> selected: -1;
+    // Off while the list is replaced, so the highlight only glides between rows you move through.
+    in property <bool> glide;
+
+    in-out property <string> query;
+    in property <string> placeholder: "Search for apps and commands…";
+
+    // The bar along the bottom.
+    in property <image> context-icon;
+    in property <int> context-tint;
+    in property <string> context-title: "Flint";
+    in property <string> primary-label;
+    in property <string> mod-key: "Ctrl";
+    in property <string> toast;
+    in property <bool> toast-failed;
+    // macOS keeps its own frame (hidden title bar) for the rounded corners and shadow.
+    in property <bool> frameless: true;
+    // From the system's light or dark setting. Unknown counts as dark.
+    out property <bool> system-dark: Palette.color-scheme != ColorScheme.light;
+    callback scheme-changed();
+    changed system-dark => {
+        root.scheme-changed();
+    }
+
+    // Actions (Ctrl/Cmd K) for the selected item.
+    in property <[ActionRow]> actions;
+    in property <string> actions-title;
+    in-out property <bool> actions-open;
+    in-out property <int> action-selected;
+    in-out property <string> action-query;
+
+    // "Are you sure?" before anything that ends your session.
+    in property <bool> confirm-open;
+    in property <string> confirm-title;
+    in property <string> confirm-message;
+    in property <string> confirm-label;
+    in property <image> confirm-icon;
+
+    callback query-edited(string);
+    callback move(int);
+    callback hover(int);
+    callback activate(int, bool);
+    callback toggle-actions();
+    callback action-query-edited(string);
+    callback action-move(int);
+    callback action-hover(int);
+    callback action-run(int);
+    callback answer(bool);
+    callback escape();
+    callback settings();
+
+    public function focus-search() {
+        search.focus();
+    }
+    public function focus-actions() {
+        panel.focus-field();
+    }
+    // Called on hiding: without focus the caret's blink timer stops, so nothing ticks while closed.
+    public function blur() {
+        search.clear-focus();
+        panel.clear-field-focus();
+    }
+    public function reset-scroll() {
+        list.content-y = 0;
+    }
+
+    function reveal() {
+        if selected < 0 || selected >= rows.length {
+            return;
+        }
+        // Headings above the first item stay in view when it's picked.
+        if rows[selected].y - 8px < -list.content-y || selected <= 1 {
+            list.content-y = selected <= 1 ? 0 : -(rows[selected].y - 8px);
+        } else if rows[selected].y + rows[selected].height + 8px > -list.content-y + list.height {
+            list.content-y = -(rows[selected].y + rows[selected].height + 8px - list.height);
+        }
+    }
+
+    changed selected => {
+        reveal();
+    }
+
+    FocusScope {
+        // Seen before the text field, so the arrows and Enter steer the list while you type.
+        capture-key-pressed(e) => {
+            if root.confirm-open {
+                if e.text == Key.Escape {
+                    root.answer(false);
+                } else if e.text == Key.Return {
+                    root.answer(true);
+                }
+                return accept;
+            }
+            if e.modifiers.control && (e.text == "k" || e.text == "K") {
+                root.toggle-actions();
+                return accept;
+            }
+            if root.actions-open {
+                if e.text == Key.Escape {
+                    root.toggle-actions();
+                    return accept;
+                }
+                if e.text == Key.UpArrow {
+                    root.action-move(-1);
+                    return accept;
+                }
+                if e.text == Key.DownArrow {
+                    root.action-move(1);
+                    return accept;
+                }
+                if e.text == Key.Return {
+                    root.action-run(root.action-selected);
+                    return accept;
+                }
+                return reject;
+            }
+            if e.text == Key.UpArrow || ((e.modifiers.control || e.modifiers.meta) && e.text == "p") {
+                root.move(-1);
+                return accept;
+            }
+            if e.text == Key.DownArrow || ((e.modifiers.control || e.modifiers.meta) && e.text == "n") {
+                root.move(1);
+                return accept;
+            }
+            if e.text == Key.PageUp {
+                root.move(-8);
+                return accept;
+            }
+            if e.text == Key.PageDown {
+                root.move(8);
+                return accept;
+            }
+            if e.text == Key.Return {
+                root.activate(root.selected, e.modifiers.control);
+                return accept;
+            }
+            if e.text == Key.Escape {
+                root.escape();
+                return accept;
+            }
+            if e.modifiers.control && e.text == "," {
+                root.settings();
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            // Search
+            Rectangle {
+                height: 56px;
+                search := TextInput {
+                    x: 20px;
+                    width: parent.width - 40px;
+                    text <=> root.query;
+                    color: Theme.ink;
+                    font-size: 17px;
+                    vertical-alignment: center;
+                    single-line: true;
+                    selection-background-color: Theme.blue.with-alpha(0.35);
+                    selection-foreground-color: Theme.ink;
+                    edited => {
+                        root.query-edited(self.text);
+                    }
+                }
+
+                Text {
+                    x: 20px;
+                    text: root.placeholder;
+                    color: Theme.ink-3;
+                    font-size: 17px;
+                    vertical-alignment: center;
+                    visible: root.query == "";
+                }
+            }
+
+            Rectangle {
+                height: 1px;
+                background: Theme.line;
+            }
+
+            // Results
+            Rectangle {
+                vertical-stretch: 1;
+                list := Flickable {
+                    x: 8px;
+                    width: parent.width - 16px;
+                    content-height: root.rows-height + 8px;
+                    // The highlight moves between rows rather than blinking from one to the next.
+                    if root.selected >= 0 && root.rows[root.selected].kind == 1: Rectangle {
+                        y: root.rows[root.selected].y;
+                        height: root.rows[root.selected].height;
+                        border-radius: 8px;
+                        background: Theme.raised;
+                        animate y {
+                            duration: root.glide ? 110ms : 0ms;
+                            easing: cubic-bezier(0.2, 0, 0, 1);
+                        }
+                    }
+                    for row[i] in root.rows: Rectangle {
+                        y: row.y;
+                        height: row.height;
+                        if row.kind == 0: SectionRow {
+                            data: row;
+                        }
+                        if row.kind == 1: ItemRow {
+                            data: row;
+                            selected: i == root.selected;
+                        }
+                        if row.kind == 2: CalcRow {
+                            data: row;
+                            selected: i == root.selected;
+                            background: i == root.selected ? Theme.raised : transparent;
+                        }
+                        if row.kind != 0: TouchArea {
+                            pointer-event(e) => {
+                                if e.kind == PointerEventKind.move && i != root.selected {
+                                    root.hover(i);
+                                }
+                            }
+                            clicked => {
+                                root.activate(i, false);
+                            }
+                        }
+                    }
+                }
+
+                // A thin scroll bar, only when there's more than fits.
+                if list.content-height > list.height: Rectangle {
+                    x: parent.width - 5px;
+                    width: 3px;
+                    border-radius: 1.5px;
+                    background: Theme.ink-3.with-alpha(0.35);
+                    height: max(24px, list.height * list.height / list.content-height);
+                    y: (list.height - self.height) * (-list.content-y / max(1px, list.content-height - list.height));
+                }
+            }
+
+            // The bar along the bottom: where you are, and what Enter and Ctrl K will do.
+            Rectangle {
+                height: 40px;
+                background: Theme.bg;
+                Rectangle {
+                    y: 0;
+                    height: 1px;
+                    background: Theme.line;
+                }
+
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 10px;
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        RowIcon {
+                            source: root.toast == "" ? root.context-icon : root.toast-failed ? @image-url("icons/quit.svg") : @image-url("icons/check.svg");
+                            tint: root.toast == "" ? root.context-tint : root.toast-failed ? 4 : 3;
+                            size: 18px;
+                        }
+                    }
+
+                    Text {
+                        text: root.toast != "" ? root.toast : root.context-title;
+                        color: root.toast != "" ? Theme.ink : Theme.ink-2;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+
+                    if root.primary-label != "": Rectangle {
+                        y: 6px;
+                        height: parent.height - 12px;
+                        border-radius: 6px;
+                        background: primary-touch.has-hover ? Theme.raised : transparent;
+                        primary-touch := TouchArea {
+                            clicked => {
+                                root.activate(root.selected, false);
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 6px;
+                            spacing: 8px;
+                            Text {
+                                text: root.primary-label;
+                                color: Theme.ink;
+                                font-size: 13px;
+                                font-weight: 500;
+                                vertical-alignment: center;
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                Keycap {
+                                    label: "↵";
+                                }
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 1px;
+                            height: 16px;
+                            background: Theme.line;
+                        }
+                    }
+
+                    Rectangle {
+                        y: 6px;
+                        height: parent.height - 12px;
+                        border-radius: 6px;
+                        background: actions-touch.has-hover || root.actions-open ? Theme.raised : transparent;
+                        actions-touch := TouchArea {
+                            clicked => {
+                                root.toggle-actions();
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 6px;
+                            spacing: 8px;
+                            Text {
+                                text: "Actions";
+                                color: Theme.ink-2;
+                                font-size: 13px;
+                                font-weight: 500;
+                                vertical-alignment: center;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 3px;
+                                padding-top: 4px;
+                                padding-bottom: 4px;
+                                Keycap {
+                                    label: root.mod-key;
+                                }
+
+                                Keycap {
+                                    label: "K";
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.actions-open: TouchArea {
+            clicked => {
+                root.toggle-actions();
+            }
+        }
+
+        panel := ActionPanel {
+            x: root.width - self.width - 10px;
+            y: root.height - 40px - self.height - 8px;
+            visible: root.actions-open;
+            actions: root.actions;
+            title: root.actions-title;
+            selected: root.action-selected;
+            query <=> root.action-query;
+            edited(text) => {
+                root.action-query-edited(text);
+            }
+            hover(i) => {
+                root.action-hover(i);
+            }
+            run(i) => {
+                root.action-run(i);
+            }
+        }
+
+        if root.confirm-open: ConfirmDialog {
+            title: root.confirm-title;
+            message: root.confirm-message;
+            label: root.confirm-label;
+            icon: root.confirm-icon;
+            answer(yes) => {
+                root.answer(yes);
+            }
+        }
+    }
+}

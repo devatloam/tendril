@@ -1,0 +1,136 @@
+// No console window behind the launcher on Windows.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
+mod app;
+mod apps;
+mod calc;
+mod catalog;
+mod config;
+mod hotkey;
+mod icons;
+mod ipc;
+mod palettes;
+mod search;
+mod system;
+mod usage;
+mod window;
+
+slint::include_modules!();
+
+use app::{App, with_app};
+use std::process::ExitCode;
+
+const HELP: &str = "\
+flint: a keyboard launcher
+
+  flint               start, or open the one that's running
+  flint --hidden      start without opening the window (for login items)
+  flint toggle        open or close the running Flint; bind this on Wayland
+  flint show | hide
+  flint --version
+
+Settings live in config.toml; \"Flint Settings\" opens it.
+";
+
+fn main() -> ExitCode {
+    let mut start_hidden = false;
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "toggle" | "show" | "hide" => {
+                return match ipc::send(&arg) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!("flint: couldn't reach a running Flint ({e})");
+                        ExitCode::FAILURE
+                    }
+                };
+            }
+            "--hidden" | "--background" => start_hidden = true,
+            "-V" | "--version" => {
+                println!("flint {}", env!("CARGO_PKG_VERSION"));
+                return ExitCode::SUCCESS;
+            }
+            "-h" | "--help" => {
+                print!("{HELP}");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("flint: unknown argument {other}\n\n{HELP}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    // Already running: bring that one up instead of starting a second.
+    if ipc::send("show").is_ok() {
+        return ExitCode::SUCCESS;
+    }
+
+    // Hiding destroys the window instead of keeping it, so its pixel buffer is freed while
+    // you're not using it. Set before any thread starts.
+    unsafe { std::env::set_var("SLINT_DESTROY_WINDOW_ON_HIDE", "1") };
+
+    match run(start_hidden) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("flint: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(start_hidden: bool) -> Result<(), Box<dyn std::error::Error>> {
+    select_backend()?;
+    let ui = Launcher::new()?;
+    ui.set_frameless(!cfg!(target_os = "macos"));
+    let app = App::install(&ui, config::load());
+    window::watch(&ui);
+    app.rescan(false);
+
+    let hotkeys = hotkey::Hotkeys::new();
+    hotkeys.set(&app.config.borrow().hotkey);
+    app.set_hotkeys(hotkeys);
+
+    ipc::listen(|word| {
+        let _ = slint::invoke_from_event_loop(move || {
+            with_app(|app| {
+                let Some(ui) = app.ui.upgrade() else { return };
+                match word.as_str() {
+                    "toggle" => window::toggle(&ui),
+                    "show" => window::show(&ui),
+                    "hide" => window::hide(&ui),
+                    _ => {}
+                }
+            })
+        });
+    })?;
+
+    if start_hidden {
+        println!("flint: running; press {} to open", app.config.borrow().hotkey);
+    } else {
+        window::show(&ui);
+    }
+    slint::run_event_loop_until_quit()?;
+    app.closing();
+    ipc::cleanup();
+    Ok(())
+}
+
+/// winit with the CPU renderer: no GPU context and its driver memory, and plenty fast for a
+/// window this size since only what changed is redrawn.
+fn select_backend() -> Result<(), slint::PlatformError> {
+    #[allow(unused_mut)]
+    let mut selector = slint::BackendSelector::new()
+        .backend_name("winit".into())
+        .renderer_name("software".into())
+        .with_winit_window_attributes_hook(window::attributes);
+    #[cfg(target_os = "macos")]
+    {
+        use slint::winit_030::winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+        // No Dock icon and no menu bar: Flint is a panel, not an app you switch to.
+        let mut builder = slint::winit_030::winit::event_loop::EventLoop::<slint::winit_030::SlintEvent>::with_user_event();
+        builder.with_activation_policy(ActivationPolicy::Accessory);
+        selector = selector.with_winit_event_loop_builder(builder);
+    }
+    selector.select()
+}

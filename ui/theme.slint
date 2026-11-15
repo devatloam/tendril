@@ -1,0 +1,35 @@
+// Colours come from the palette picked in config.toml (src/palettes.rs). These are Ember's,
+// for the moment before Rust sets them. Tints are small marks of meaning, never a fill.
+export global Theme {
+    in property <color> sunken: #1a1918;
+    in property <color> bg: #1f1e1d;
+    in property <color> panel: #262624;
+    in property <color> raised: #343330;
+    in property <color> line: #3a3835;
+    in property <color> ink: #f5f4ef;
+    in property <color> ink-2: #a3a098;
+    in property <color> ink-3: #87867f;
+    in property <color> accent: #d97757;
+    in property <color> blue: #6a9bcc;
+    in property <color> green: #93a877;
+    in property <color> red: #f06e64;
+    in property <color> amber: #e49c42;
+    in property <color> violet: #a99bd6;
+    in property <bool> dark: true;
+
+    // Tint numbers, as Rust sends them: 0 means a real icon, drawn as it is.
+    public pure function tint(n: int) -> color {
+        if n == 1 { return accent; }
+        if n == 2 { return blue; }
+        if n == 3 { return green; }
+        if n == 4 { return red; }
+        if n == 5 { return amber; }
+        if n == 6 { return violet; }
+        return ink-2;
+    }
+
+    // How things move, as on the Blight dashboard: arrive with settle, leave fast.
+    // 150ms for replies to a key, 250ms for most things.
+    out property <duration> quick: 150ms;
+    out property <duration> calm: 250ms;
+}

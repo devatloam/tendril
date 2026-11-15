@@ -24,6 +24,10 @@ pub enum Kind {
     Fallback,
     File,
     Link,
+    /// Something you copied.
+    Clip,
+    /// An open window.
+    Window,
 }
 
 impl Kind {
@@ -32,7 +36,8 @@ impl Kind {
             Kind::Application => "Application",
             Kind::Command => "Command",
             Kind::Link => "Quicklink",
-            Kind::Calculator | Kind::Fallback | Kind::File => "",
+            Kind::Window => "Window",
+            Kind::Calculator | Kind::Fallback | Kind::File | Kind::Clip => "",
         }
     }
 }
@@ -64,6 +69,15 @@ pub enum Run {
     /// Switches to preview versions and installs the newest.
     InstallPreview,
     RestartToUpdate,
+    /// The Clipboard History view.
+    Clipboard,
+    /// The Switch Windows view.
+    Windows,
+    /// A copy in clipboard history, by its id.
+    Clip(u64),
+    /// An open window, by the system's id for it.
+    Window(u64),
+    ClearClipboard,
     Quit,
 }
 
@@ -114,7 +128,10 @@ impl Item {
             Run::Path(_, false) => "Open File",
             Run::Prefill(_) => "Type Text",
             Run::RestartToUpdate => "Restart",
-            Run::Appearance => "Open",
+            Run::Appearance | Run::Clipboard | Run::Windows => "Open",
+            Run::Clip(_) if crate::clipboard::can_paste() => "Paste",
+            Run::Clip(_) => "Copy",
+            Run::Window(_) => "Switch to Window",
             _ => "Run Command",
         }
     }
@@ -130,11 +147,16 @@ pub fn commands() -> Vec<Item> {
         Item::command("settings", "Tendril Settings", "preferences config hotkey", "settings", 7, Run::Settings),
         Item::command("reload", "Reload Apps", "refresh rescan", "refresh", 7, Run::Reload),
         Item::command("appearance", "Appearance", "settings look theme blur glow compact details grid keys", "palette", 7, Run::Appearance),
+        Item::command("clipboard", "Clipboard History", "clipboard copied paste history clip", "clipboard", 7, Run::Clipboard),
+        Item::command("clear-clipboard", "Clear Clipboard History", "clipboard forget delete copied", "eraser", 7, Run::ClearClipboard),
         Item::command("updates", "Check for Updates", "update upgrade new version", "download", 7, Run::CheckUpdates),
         Item::command("setup", "Set Up Tendril", "onboarding welcome walkthrough shortcut hotkey", "wave", 7, Run::Onboarding),
         Item::command("about", "About Tendril", "version info", "tendril", 7, Run::About),
         Item::command("quit", "Quit Tendril", "exit close", "quit", 7, Run::Quit),
     ];
+    if crate::switcher::available() {
+        items.push(Item::command("windows", "Switch Windows", "window switch focus alt tab open windows", "windows", 7, Run::Windows));
+    }
     for p in crate::palettes::PALETTES {
         let mut item = Item::command(
             &format!("theme:{}", p.key),

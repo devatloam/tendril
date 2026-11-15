@@ -44,8 +44,12 @@ Windows and macOS can be checked from Linux: `rustup target add x86_64-pc-window
 
 ## Look and words
 
-- White leads, blue highlights (`Theme.highlight`): the selected row and its icon, Tendril's mark. Other colours
-  only where they mean something: red for destructive, green for done. Same rule as Blight's dashboard.
+- Anything with its own icon keeps it, in its own colours: apps, files (icon theme / Windows shell), web rows (the
+  default browser's, browser.rs), quicklinks (the site's, sites.rs). Builtin glyphs are for Tendril's own commands.
+- The selected row is a white wash by default (Raycast-like); blue is for Tendril's mark and small accents. Other
+  colours only where they mean something: red for destructive, green for done. Appearance's Style/Selection/Icons
+  (`Theme.modern`, `blue-selection`, `bold-icons`) let people choose more. Flat style uses flat fills only: the CPU
+  renderer doesn't round gradients. Gradients belong behind `Theme.modern`, which is only true on the GPU renderer.
 - Icons are drawn on Lucide's 24 grid with an outline and a solid for the selected row. Add one by describing it in
   `scripts/icons.py`, running it, and listing it in `src/icons.rs`.
 - Write like Blight: plain words from the user's side, short sentences, no marketing. Comments say why, not what.

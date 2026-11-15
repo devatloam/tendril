@@ -19,6 +19,10 @@ pub struct Config {
     /// Preview versions, built from every change before a release: "ask" offers the newest one
     /// beside updates, "always" follows them, "never" stays on releases.
     pub previews: String,
+    /// Keep what you copy, for Clipboard History.
+    pub clipboard_history: bool,
+    /// Fetch quicklinks' sites' own icons.
+    pub site_icons: bool,
     pub appearance: Appearance,
     pub search: Vec<Engine>,
     /// Your own links, [[quicklink]] in the file.
@@ -49,6 +53,12 @@ pub struct Appearance {
     pub quick_keys: bool,
     /// "Results", "Commands" and the like above each group.
     pub headings: bool,
+    /// "flat", or "modern": gradients and sheens, drawn with the GPU.
+    pub style: String,
+    /// The selected row: "white" or "blue".
+    pub selection: String,
+    /// "subtle" or "bold" squares behind the icons.
+    pub icons: String,
 }
 
 impl Default for Appearance {
@@ -65,6 +75,9 @@ impl Default for Appearance {
             favourites: "grid".into(),
             quick_keys: false,
             headings: true,
+            style: "flat".into(),
+            selection: "white".into(),
+            icons: "subtle".into(),
         }
     }
 }
@@ -130,6 +143,8 @@ impl Default for Config {
             onboarded: false,
             updates: "auto".into(),
             previews: "ask".into(),
+            clipboard_history: true,
+            site_icons: true,
             appearance: Appearance::default(),
             search: vec![
                 Engine { name: "Google".into(), url: "https://www.google.com/search?q={query}".into() },
@@ -169,6 +184,15 @@ updates = "auto"
 # they come (and the next release once it's newer), "never" sticks to releases.
 previews = "ask"
 
+# Keep text you copy (up to 200 copies) for Clipboard History. It's kept on this computer only, in
+# clipboard.json next to usage.toml. Copies a password manager marks as secret are skipped where the
+# system shows the mark (Windows, and KDE on X11). Turning this off deletes what's kept.
+clipboard_history = true
+
+# Show your quicklinks with their sites' own icons. Each site's icon is fetched once, from that site
+# only, and kept in the cache folder.
+site_icons = true
+
 [appearance]
 # See through the window, with what's behind it blurred. On Linux under X11 this costs nothing
 # extra and is on to start with; on Windows, macOS and Wayland it switches Tendril to drawing with
@@ -185,6 +209,13 @@ opacity = 0.78
 glow = "still"
 # The line under the search field in Blight's clay, blue and green.
 gradient_divider = true
+# "flat" draws plain fills, on the CPU. "modern" adds gradients and sheens, and draws with the GPU
+# to keep their corners round, which keeps tens of megabytes more while Tendril runs.
+style = "flat"
+# The selected row: a "white" wash, or a soft "blue" one.
+selection = "white"
+# The squares behind icons: "subtle", or "bold" (with a blue selection, the selected one turns blue).
+icons = "subtle"
 # "regular" (750 × 474) or "compact" (narrower, shorter rows, no bar along the bottom).
 size = "regular"
 # A pane beside the list with the selected item's details.

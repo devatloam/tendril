@@ -75,10 +75,46 @@ fn item(is_dir: bool, name: String, path: PathBuf) -> Item {
         subtitle: shown,
         keywords: String::new(),
         kind: Kind::File,
-        icon: Icon::Builtin(if is_dir { "folder" } else { "file" }),
-        tint: if is_dir { 2 } else { 7 },
+        icon: icon(&path, is_dir),
+        tint: 7,
         run: Run::Path(path.clone(), is_dir),
         path: Some(path),
+    }
+}
+
+/// The system's own icon for a file or folder where Tendril can get it: Windows draws any
+/// path's, Linux's icon theme has them by kind. Elsewhere, a plain glyph.
+#[cfg(windows)]
+fn icon(path: &Path, _is_dir: bool) -> Icon {
+    Icon::Shell(path.to_string_lossy().into_owned())
+}
+
+#[cfg(target_os = "linux")]
+fn icon(path: &Path, is_dir: bool) -> Icon {
+    let name = if is_dir { "folder" } else { kind_icon(path) };
+    let found = crate::apps::theme_icon(name).or_else(|| (!is_dir).then(|| crate::apps::theme_icon("text-x-generic")).flatten());
+    found.map_or(Icon::Builtin(if is_dir { "folder" } else { "file" }), Icon::File)
+}
+
+#[cfg(target_os = "macos")]
+fn icon(_path: &Path, is_dir: bool) -> Icon {
+    Icon::Builtin(if is_dir { "folder" } else { "file" })
+}
+
+/// The freedesktop icon name for a file by its extension.
+#[cfg(target_os = "linux")]
+fn kind_icon(path: &Path) -> &'static str {
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "tif" | "tiff" | "avif" | "heic" => "image-x-generic",
+        "mp3" | "flac" | "ogg" | "wav" | "m4a" | "opus" => "audio-x-generic",
+        "mp4" | "mkv" | "webm" | "mov" | "avi" => "video-x-generic",
+        "pdf" => "application-pdf",
+        "zip" | "tar" | "gz" | "xz" | "zst" | "7z" | "rar" | "bz2" => "package-x-generic",
+        "sh" | "py" | "rs" | "js" | "ts" | "c" | "cpp" | "h" | "go" | "rb" | "java" => "text-x-script",
+        "html" | "htm" => "text-html",
+        "deb" | "rpm" | "appimage" => "application-x-executable",
+        _ => "text-x-generic",
     }
 }
 

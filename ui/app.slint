@@ -11,14 +11,18 @@ export { Theme, Row, Fact, Detail, ActionRow }
 // The highlight under the selected row or tile: lit from above like Blight's `gloss`, and drawn
 // in the ink colour at low strength so it reads the same over a solid panel, glass or the glow.
 component Highlight inherits Rectangle {
-    border-radius: 8px;
-    background: @linear-gradient(180deg, Theme.highlight.with-alpha(Theme.dark ? 0.26 : 0.17) 0%, Theme.highlight.with-alpha(Theme.dark ? 0.17 : 0.11) 100%);
-    Rectangle {
-        x: 6px;
+    // Flat: a plain wash, as Raycast does it (the CPU renderer only rounds flat fills).
+    // Modern: lit from above, with a faint sheen along the top edge.
+    property <color> c: Theme.selection;
+    property <float> a: Theme.selection-alpha;
+    border-radius: 10px;
+    background: Theme.modern ? @linear-gradient(180deg, c.with-alpha(a * 1.3) 0%, c.with-alpha(a * 0.75) 100%) : c.with-alpha(a);
+    if Theme.modern: Rectangle {
+        x: 10px;
         y: 0;
-        width: parent.width - 12px;
+        width: parent.width - 20px;
         height: 1px;
-        background: #ffffff.with-alpha(Theme.dark ? 0.07 : 0.5);
+        background: #ffffff.with-alpha(Theme.dark ? 0.06 : 0.4);
     }
 }
 
@@ -417,7 +421,7 @@ export component Launcher inherits Window {
                                 if row.kind == 2: CalcRow {
                                     data: row;
                                     selected: i == root.selected;
-                                    background: i == root.selected ? Theme.highlight.with-alpha(Theme.dark ? 0.2 : 0.13) : transparent;
+                                    background: i == root.selected ? Theme.selection.with-alpha(Theme.selection-alpha) : transparent;
                                 }
                                 // Nothing matched: the shapes hop once on a still glow.
                                 if row.kind == 3: Rectangle {

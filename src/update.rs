@@ -70,7 +70,8 @@ pub fn asset_name() -> Option<&'static str> {
     }
 }
 
-fn agent() -> ureq::Agent {
+/// The HTTP client for update checks and site icons: the system's certificates, a time limit.
+pub fn agent() -> ureq::Agent {
     // The system's own certificates, so it works wherever the system's browser does (behind
     // a company proxy, say), rather than a list built into Tendril.
     #[cfg(target_os = "linux")]
@@ -83,7 +84,7 @@ fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .tls_config(tls)
         .timeout_global(Some(Duration::from_secs(60)))
-        .user_agent(format!("Tendril/{VERSION} (update check)"))
+        .user_agent(format!("Tendril/{VERSION}"))
         .build()
         .into()
 }

@@ -16,6 +16,15 @@ export global Theme {
     in property <color> amber: #e49c42;
     in property <color> violet: #a99bd6;
     in property <bool> dark: true;
+    // Appearance → Style, Selection and Icons. Modern only while the GPU renderer draws, since
+    // the CPU one can't round a gradient.
+    in property <bool> modern: false;
+    in property <bool> blue-selection: false;
+    in property <bool> bold-icons: false;
+
+    // The selected row's wash: white, or a soft blue.
+    out property <color> selection: blue-selection ? blue.mix(ink, 0.7) : ink;
+    out property <float> selection-alpha: blue-selection ? (dark ? 0.17 : 0.12) : (dark ? 0.085 : 0.06);
 
     // Blue leads, as on Blight's dashboard: selection, the highlighted row's icon, Tendril's mark.
     // White carries everything else; other colours only where they mean something.

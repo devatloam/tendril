@@ -5,8 +5,10 @@ mod app;
 mod appearance;
 mod apps;
 mod autostart;
+mod browser;
 mod calc;
 mod catalog;
+mod clipboard;
 mod config;
 mod hotkey;
 mod icons;
@@ -14,6 +16,8 @@ mod ipc;
 mod palettes;
 mod paths;
 mod search;
+mod sites;
+mod switcher;
 mod system;
 mod update;
 mod usage;
@@ -107,7 +111,7 @@ fn main() -> ExitCode {
 
 fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::Error>> {
     let config = config::load();
-    select_backend(config.appearance.blur)?;
+    select_backend(window::wants_gpu(&config.appearance))?;
     let ui = Launcher::new()?;
     ui.set_frameless(!cfg!(target_os = "macos"));
     let app = App::install(&ui, config);
@@ -118,6 +122,7 @@ fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::E
     hotkeys.set(&app.config.borrow().hotkey);
     app.set_hotkeys(hotkeys);
     app.start_update_checks();
+    app.start_clipboard();
 
     ipc::listen(|word| {
         let _ = slint::invoke_from_event_loop(move || {
@@ -155,8 +160,7 @@ fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::E
 /// window this size since only what changed is redrawn. A see-through window needs the GPU
 /// renderer everywhere but X11, so that's used when blur is on there; if it can't start (no
 /// OpenGL), Tendril falls back to the CPU and a solid window.
-fn select_backend(blur: bool) -> Result<(), slint::PlatformError> {
-    let gpu = blur && window::needs_gpu_for_blur();
+fn select_backend(gpu: bool) -> Result<(), slint::PlatformError> {
     let wanted = std::env::var("TENDRIL_RENDERER").unwrap_or_else(|_| if gpu { "femtovg" } else { "software" }.into());
     match selector(&wanted).select() {
         Ok(()) => {

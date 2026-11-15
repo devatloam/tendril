@@ -35,6 +35,8 @@ const BUILTIN: &[(&str, &[u8], &[u8])] = &[
     ("download", include_bytes!("../ui/icons/download.svg"), include_bytes!("../ui/icons/download-solid.svg")),
     ("arrow", include_bytes!("../ui/icons/arrow.svg"), include_bytes!("../ui/icons/arrow-solid.svg")),
     ("check", include_bytes!("../ui/icons/check.svg"), include_bytes!("../ui/icons/check-solid.svg")),
+    ("clipboard", include_bytes!("../ui/icons/clipboard.svg"), include_bytes!("../ui/icons/clipboard-solid.svg")),
+    ("windows", include_bytes!("../ui/icons/windows.svg"), include_bytes!("../ui/icons/windows-solid.svg")),
     ("flask", include_bytes!("../ui/icons/flask.svg"), include_bytes!("../ui/icons/flask-solid.svg")),
     ("blur", include_bytes!("../ui/icons/blur.svg"), include_bytes!("../ui/icons/blur-solid.svg")),
     ("window", include_bytes!("../ui/icons/window.svg"), include_bytes!("../ui/icons/window-solid.svg")),

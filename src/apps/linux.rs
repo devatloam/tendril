@@ -304,6 +304,11 @@ impl IconFinder {
     }
 
     fn find(&mut self, name: &str) -> Option<PathBuf> {
+        self.find_in(name, "apps")
+    }
+
+    /// `context` is the theme's folder for that kind of icon: apps, places, mimetypes.
+    fn find_in(&mut self, name: &str, context: &str) -> Option<PathBuf> {
         if name.is_empty() {
             return None;
         }
@@ -318,12 +323,12 @@ impl IconFinder {
                     continue;
                 }
                 for size in SIZES {
-                    if let Some(p) = probe(&base.join(size).join("apps"), name) {
+                    if let Some(p) = probe(&base.join(size).join(context), name) {
                         return Some(p);
                     }
                 }
                 for size in FLAT_SIZES {
-                    if let Some(p) = probe(&base.join("apps").join(size), name) {
+                    if let Some(p) = probe(&base.join(context).join(size), name) {
                         return Some(p);
                     }
                 }
@@ -331,6 +336,28 @@ impl IconFinder {
         }
         data_dirs().iter().find_map(|d| probe(&d.join("pixmaps"), name)).or_else(|| probe(Path::new("/usr/share/pixmaps"), name))
     }
+}
+
+/// The icon theme, and what's been looked up in it.
+type Theme = (IconFinder, HashMap<&'static str, Option<PathBuf>>);
+
+thread_local! {
+    static THEME: std::cell::RefCell<Option<Theme>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The icon theme's icon for a folder or kind of file ("folder", "text-x-generic"), looked up
+/// once and remembered.
+pub fn theme_icon(name: &'static str) -> Option<PathBuf> {
+    THEME.with_borrow_mut(|slot| {
+        let (finder, found) = slot.get_or_insert_with(|| (IconFinder::new(), HashMap::new()));
+        found
+            .entry(name)
+            .or_insert_with(|| {
+                let context = if name.starts_with("folder") || name.starts_with("user-") { "places" } else { "mimetypes" };
+                finder.find_in(name, context)
+            })
+            .clone()
+    })
 }
 
 fn probe(dir: &Path, name: &str) -> Option<PathBuf> {

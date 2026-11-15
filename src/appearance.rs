@@ -88,6 +88,33 @@ pub fn settings(config: &Config) -> Vec<Setting> {
         Some("appearance"),
         texts(&[("still", "Still"), ("drift", "Drifting"), ("off", "Off")], &a.glow),
     );
+    add(
+        "style",
+        "Style",
+        "Modern adds gradients; uses the GPU and more memory",
+        "sparkle",
+        7,
+        Some("appearance"),
+        texts(&[("flat", "Flat"), ("modern", "Modern")], &a.style),
+    );
+    add(
+        "selection",
+        "Selection",
+        "The selected row's colour",
+        "pointer",
+        7,
+        Some("appearance"),
+        texts(&[("white", "White"), ("blue", "Blue")], &a.selection),
+    );
+    add(
+        "icons",
+        "Icons",
+        "The squares behind them",
+        "app",
+        7,
+        Some("appearance"),
+        texts(&[("subtle", "Subtle"), ("bold", "Bold")], &a.icons),
+    );
     add("gradient_divider", "Gradient line", "Under the search field", "gradient", 7, Some("appearance"), on_off(a.gradient_divider));
     add(
         "size",
@@ -120,6 +147,16 @@ pub fn settings(config: &Config) -> Vec<Setting> {
         None,
         texts(&[("auto", "Automatic"), ("notify", "Tell me"), ("off", "Off")], &config.updates),
     );
+    add(
+        "clipboard_history",
+        "Clipboard history",
+        "Keeps what you copy, on this computer only",
+        "clipboard",
+        7,
+        None,
+        on_off(config.clipboard_history),
+    );
+    add("site_icons", "Website icons", "Quicklinks show their site's icon, fetched once", "globe", 7, None, on_off(config.site_icons));
     add(
         "previews",
         "Preview versions",
@@ -171,7 +208,7 @@ fn blur_styles() -> Option<(&'static [(&'static str, &'static str)], &'static st
 }
 
 /// The settings shown at each step of the first-run walkthrough, by key.
-pub const LOOK: &[&str] = &["theme", "blur", "blur_style", "opacity", "glow"];
+pub const LOOK: &[&str] = &["theme", "style", "selection", "icons", "blur", "blur_style", "opacity", "glow"];
 pub const LAYOUT: &[&str] = &["size", "favourites", "details", "quick_keys", "headings"];
 
 #[cfg(test)]

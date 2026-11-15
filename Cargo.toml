@@ -28,10 +28,10 @@ sha2 = "0.11"
 serde_json = "1"
 self-replace = "1.5"
 arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb = "0.13"
+x11rb = { version = "0.13", features = ["xfixes", "xtest"] }
 # Update checks: rustls, trusting the system's certificates.
 ureq = { version = "3.5", default-features = false, features = ["rustls", "platform-verifier"] }
 
@@ -45,8 +45,12 @@ windows = { version = "0.62", features = [
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
   "Win32_System_Com",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
   "Win32_System_Power",
   "Win32_System_Registry",
+  "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
   "Win32_UI_Shell_Common",
   "Win32_UI_WindowsAndMessaging",

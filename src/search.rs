@@ -52,7 +52,7 @@ pub fn lines(query: &str, catalog: &[Item], usage: &Usage, engines: &[Engine], l
             keywords: String::new(),
             kind: Kind::Link,
             icon: Icon::Builtin("link"),
-            tint: 2,
+            tint: 7,
             run: crate::catalog::link_target(&filled),
             path: None,
         }));
@@ -83,16 +83,16 @@ pub fn lines(query: &str, catalog: &[Item], usage: &Usage, engines: &[Engine], l
 
     lines.push(Line::Section(format!("Use “{}” with…", shorten(query, 40))));
     if let Some(url) = as_url(query) {
-        lines.push(Line::Item(fallback("open-url", "Open URL", query, "link", 2, url)));
+        lines.push(Line::Item(fallback("open-url", "Open URL", query, "link", 7, url)));
     }
     for engine in engines {
         let url = engine.url.replace("{query}", &encode(query));
         let title = format!("Search {}", engine.name);
-        lines.push(Line::Item(fallback(&engine.name, &title, query, "globe", 2, url)));
+        lines.push(Line::Item(fallback(&engine.name, &title, query, "globe", 7, url)));
     }
     for link in links.iter().filter(|l| l.takes_text() && !keyword_used) {
         let target = crate::catalog::link_target(&fill(&link.url, query));
-        let mut item = fallback(&link.name, &format!("Open {}", link.name), query, "link", 2, String::new());
+        let mut item = fallback(&link.name, &format!("Open {}", link.name), query, "link", 7, String::new());
         item.run = target;
         lines.push(Line::Item(item));
     }

@@ -68,23 +68,28 @@ export component Keycap inherits Rectangle {
     }
 }
 
-// An app's own icon, or a glyph on a square so a list reads by shape first. The square is lit
-// from above, a little brighter at the top, with a faint edge. Plain ones are white on a white
-// wash; on the selected row they turn blue, like everything that's highlighted.
+// An app's own icon, or a glyph on a square so a list reads by shape first: white on a white
+// wash, or a meaningful colour (blue for folders and updates, red for shutting down) on a wash of
+// that colour. Subtle icons keep the wash faint and only brighten the glyph when selected; bold
+// ones are stronger, and with a blue selection the selected square turns blue. Modern lights
+// them from above, which needs the GPU renderer to keep the corners round.
 export component RowIcon inherits Rectangle {
     in property <image> source;
     in property <int> tint;
     in property <bool> on;
     in property <length> size: 20px;
     property <bool> plain: tint == 7;
-    property <color> c: plain && on ? Theme.highlight : Theme.tint(tint);
-    property <float> wash: plain && !on ? (Theme.dark ? 0.1 : 0.07) : on ? (Theme.dark ? 0.9 : 0.85) : (Theme.dark ? 0.3 : 0.22);
+    property <bool> lit: on && plain && Theme.bold-icons && Theme.blue-selection;
+    property <color> c: lit ? Theme.highlight : Theme.tint(tint);
+    property <float> wash: lit ? (Theme.dark ? 0.55 : 0.5)
+        : Theme.bold-icons ? (plain ? (Theme.dark ? 0.14 : 0.1) : (Theme.dark ? 0.28 : 0.2))
+        : (plain ? (Theme.dark ? 0.08 : 0.06) : (Theme.dark ? 0.16 : 0.12));
     width: size;
     height: size;
-    border-radius: tint == 0 ? 0 : size * 0.26;
-    background: tint == 0 ? transparent : @linear-gradient(180deg, c.with-alpha(wash) 0%, c.with-alpha(wash * 0.6) 100%);
-    border-width: tint == 0 ? 0 : 1px;
-    border-color: on && tint != 0 ? #ffffff.with-alpha(0.18) : c.with-alpha(Theme.dark ? 0.16 : 0.18);
+    border-radius: tint == 0 ? 0 : size * 0.3;
+    background: tint == 0 ? transparent
+        : Theme.modern ? @linear-gradient(180deg, c.with-alpha(wash * 1.2) 0%, c.with-alpha(wash * 0.7) 100%)
+        : c.with-alpha(wash);
     animate background {
         duration: 150ms;
         easing: cubic-bezier(0.2, 0, 0, 1);
@@ -95,7 +100,7 @@ export component RowIcon inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         source: source;
-        colorize: tint == 0 ? transparent : on ? #ffffff : plain ? Theme.ink.with-alpha(0.85) : c;
+        colorize: tint == 0 ? transparent : lit ? #ffffff : plain ? Theme.ink.with-alpha(on ? 0.95 : 0.8) : c;
         image-fit: contain;
     }
 }
@@ -438,8 +443,8 @@ export component ActionPanel inherits Rectangle {
         for action[i] in actions: Rectangle {
             y: i * row-height;
             height: row-height;
-            border-radius: 7px;
-            background: i == selected ? Theme.highlight.with-alpha(Theme.dark ? 0.22 : 0.14) : transparent;
+            border-radius: 9px;
+            background: i == selected ? Theme.selection.with-alpha(Theme.selection-alpha) : transparent;
             TouchArea {
                 pointer-event(e) => {
                     if e.kind == PointerEventKind.move && i != selected {

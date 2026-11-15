@@ -5,7 +5,7 @@ use crate::config::{self, Config};
 use crate::icons::Icons;
 use crate::search::{self, Line};
 use crate::usage::Usage;
-use crate::{ActionRow, Detail, Fact, Launcher, Row, Theme, appearance, apps, palettes, system, update, window};
+use crate::{ActionRow, Detail, Fact, Launcher, Row, Theme, appearance, apps, clipboard, palettes, switcher, system, update, window};
 use nucleo_matcher::Matcher;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, VecModel};
 use std::cell::{Cell, RefCell};
@@ -46,6 +46,16 @@ static UPDATES_ON: AtomicBool = AtomicBool::new(false);
 const UPDATE_EVERY: Duration = Duration::from_secs(6 * 3600);
 /// The first look, a little after starting, so it doesn't slow the first open.
 const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(30);
+
+/// What the list is showing.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum View {
+    /// Apps and commands.
+    Root,
+    Appearance,
+    Clipboard,
+    Windows,
+}
 
 /// Where an update stands.
 enum UpdateState {
@@ -93,7 +103,15 @@ pub struct App {
     pub shown_at: Cell<Option<Instant>>,
     hotkeys: RefCell<Option<crate::hotkey::Hotkeys>>,
     /// Showing the Appearance view instead of search results.
-    in_appearance: Cell<bool>,
+    view: Cell<View>,
+    /// What you've copied, newest first.
+    history: RefCell<clipboard::History>,
+    /// Whether a thread hears about copies as they happen; if not, the clipboard is read on open.
+    clipboard_watched: Cell<bool>,
+    /// Open windows, listed when the Switch Windows view opens.
+    windows: RefCell<Vec<switcher::Win>>,
+    /// The default browser's icon, for rows that open web pages.
+    browser: RefCell<Option<crate::catalog::Icon>>,
     /// Where the pointer was at the last hover. Rows rebuilt or scrolled under a still pointer,
     /// a window opening under it, or focus arriving, all report a hover; only a pointer that
     /// has moved since should take the selection.
@@ -114,6 +132,11 @@ enum Act {
     Reveal(PathBuf),
     Forget,
     NoPreviews,
+    /// Copy a kept copy without pasting it.
+    CopyClip(u64),
+    DeleteClip(u64),
+    ClearClips,
+    CloseWindow(u64),
 }
 
 impl App {
@@ -148,7 +171,11 @@ impl App {
             hidden_at: Cell::new(None),
             shown_at: Cell::new(None),
             hotkeys: RefCell::new(None),
-            in_appearance: Cell::new(false),
+            view: Cell::new(View::Root),
+            history: RefCell::new(clipboard::History::default()),
+            clipboard_watched: Cell::new(false),
+            windows: RefCell::new(Vec::new()),
+            browser: RefCell::new(None),
             pointer: Cell::new(None),
             onboarding: Cell::new(None),
             restart_after_onboarding: Cell::new(false),
@@ -224,6 +251,11 @@ impl App {
         ui.set_panel_opacity(a.opacity());
         ui.set_glow_mode(a.glow_mode());
         ui.set_gradient_divider(a.gradient_divider);
+        let theme = ui.global::<Theme>();
+        // Modern only once the GPU draws: until Tendril restarts, it stays flat.
+        theme.set_modern(a.style == "modern" && window::is_gpu());
+        theme.set_blue_selection(a.selection == "blue");
+        theme.set_bold_icons(a.icons == "bold");
         let walkthrough = self.onboarding.get().is_some();
         ui.set_compact(a.compact() && !walkthrough);
         ui.set_details(a.details && !walkthrough);
@@ -233,28 +265,81 @@ impl App {
     }
 
     fn set_context(&self, ui: &Launcher) {
-        let appearance = self.in_appearance.get();
-        ui.set_context_icon(self.icons.borrow_mut().builtin_solid(if appearance { "palette" } else { "tendril" }));
+        let (icon, title, placeholder) = match self.view.get() {
+            View::Root => ("tendril", "Tendril", "Search for apps and commands…"),
+            View::Appearance => ("palette", "Appearance", "Search settings…"),
+            View::Clipboard => ("clipboard", "Clipboard History", "Search what you've copied…"),
+            View::Windows => ("windows", "Switch Windows", "Search open windows…"),
+        };
+        ui.set_context_icon(self.icons.borrow_mut().builtin_solid(icon));
         // Blue: Tendril's one colour, as blue leads on Blight's dashboard.
         ui.set_context_tint(2);
-        ui.set_context_title(if appearance { "Appearance" } else { "Tendril" }.into());
-        ui.set_placeholder(if appearance { "Search settings…" } else { "Search for apps and commands…" }.into());
+        ui.set_context_title(title.into());
+        ui.set_placeholder(placeholder.into());
     }
 
     /// Opens the Appearance view, as the "Appearance" command and `tendril --appearance` do.
     pub fn open_appearance(&self) {
+        self.open_view(View::Appearance);
+    }
+
+    pub fn open_view(&self, view: View) {
         let Some(ui) = self.ui.upgrade() else { return };
-        self.in_appearance.set(true);
+        if view == View::Windows {
+            *self.windows.borrow_mut() = switcher::list();
+        }
+        self.view.set(view);
         ui.set_query(SharedString::new());
         self.set_context(&ui);
         self.refresh("");
     }
 
-    fn leave_appearance(&self, ui: &Launcher) {
-        self.in_appearance.set(false);
+    fn leave_view(&self, ui: &Launcher) {
+        self.view.set(View::Root);
+        self.windows.borrow_mut().clear();
         ui.set_query(SharedString::new());
         self.set_context(ui);
         self.refresh("");
+    }
+
+    /// Starts keeping copies, or stops and forgets them, as the setting says.
+    pub fn start_clipboard(&self) {
+        let on = self.config.borrow().clipboard_history;
+        let was = clipboard::ON.swap(on, std::sync::atomic::Ordering::Relaxed);
+        if on && !was {
+            *self.history.borrow_mut() = clipboard::History::load();
+            if !self.clipboard_watched.get() {
+                self.clipboard_watched.set(clipboard::watch());
+            }
+        } else if !on {
+            let mut history = self.history.borrow_mut();
+            if !history.clips.is_empty() || was {
+                history.clips.clear();
+                history.save();
+            }
+        }
+    }
+
+    /// A copy, from the watcher thread or read when the window opens.
+    pub fn copied(&self, text: String) {
+        if !clipboard::ON.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let changed = {
+            let mut history = self.history.borrow_mut();
+            let changed = history.add(text, clipboard::now());
+            if changed {
+                history.save();
+            }
+            changed
+        };
+        if changed
+            && self.view.get() == View::Clipboard
+            && let Some(ui) = self.ui.upgrade()
+            && ui.get_query().is_empty()
+        {
+            self.refresh("");
+        }
     }
 
     /// Called when the window is about to open.
@@ -263,6 +348,12 @@ impl App {
         *self.config.borrow_mut() = config::load();
         self.rebuild_catalog();
         self.start_update_checks();
+        self.start_clipboard();
+        if !self.clipboard_watched.get()
+            && let Some(text) = clipboard::read()
+        {
+            self.copied(text);
+        }
         if let Some(hotkeys) = &*self.hotkeys.borrow() {
             hotkeys.set(&self.config.borrow().hotkey);
         }
@@ -272,8 +363,12 @@ impl App {
         let stale = self.hidden_at.get().is_none_or(|t| t.elapsed() > KEEP_QUERY);
         if stale {
             ui.set_query(SharedString::new());
-            self.in_appearance.set(false);
+            self.view.set(View::Root);
             self.set_context(&ui);
+        }
+        // Windows come and go while Tendril is closed.
+        if self.view.get() == View::Windows {
+            *self.windows.borrow_mut() = switcher::list();
         }
         if self.scanned_at.get().is_none_or(|t| t.elapsed() > RESCAN_AFTER) {
             self.rescan(false);
@@ -288,7 +383,7 @@ impl App {
 
     pub fn start_onboarding(&self) {
         let Some(ui) = self.ui.upgrade() else { return };
-        self.in_appearance.set(false);
+        self.view.set(View::Root);
         ui.set_query(SharedString::new());
         self.show_step(0);
     }
@@ -421,7 +516,46 @@ impl App {
         let mut catalog = self.apps.borrow().clone();
         catalog.extend(crate::catalog::commands());
         catalog.extend(crate::catalog::quicklinks(&self.config.borrow().quicklink));
+        *self.browser.borrow_mut() = crate::browser::icon(&catalog);
+        for item in &mut catalog {
+            self.decorate(item);
+        }
         *self.catalog.borrow_mut() = catalog;
+        let config = self.config.borrow();
+        if config.site_icons {
+            let urls: Vec<String> = config.quicklink.iter().map(|l| l.url.clone()).collect();
+            crate::sites::fetch(&urls, || {
+                with_app(|a| {
+                    a.rebuild_catalog();
+                    if let Some(ui) = a.ui.upgrade() {
+                        a.refresh_keeping(&ui.get_query(), None);
+                    }
+                })
+            });
+        }
+    }
+
+    /// Real icons on rows that open something outside Tendril: a quicklink wears its site's
+    /// icon (sites.rs), and searches and links the default browser's.
+    fn decorate(&self, item: &mut Item) {
+        use crate::catalog::Icon;
+        if !matches!(item.kind, Kind::Link | Kind::Fallback) || !matches!(item.icon, Icon::Builtin(_)) {
+            return;
+        }
+        let config = self.config.borrow();
+        let link = item.id.strip_prefix("link:").or_else(|| item.id.strip_prefix("fallback:"));
+        let link = link.and_then(|name| config.quicklink.iter().find(|l| l.name.eq_ignore_ascii_case(name)));
+        let site = link.filter(|_| config.site_icons).and_then(|l| crate::sites::icon(&l.url));
+        let web = matches!(item.run, Run::Url(_)) || link.is_some_and(|l| crate::sites::host(&l.url).is_some());
+        let icon = match site {
+            Some(path) => Some(Icon::File(path)),
+            None if web => self.browser.borrow().clone(),
+            None => None,
+        };
+        if let Some(icon) = icon {
+            item.icon = icon;
+            item.tint = 0;
+        }
     }
 
     fn set_busy(&self, _: bool) {
@@ -593,7 +727,7 @@ impl App {
     fn refresh_if_root(&self) {
         if let Some(ui) = self.ui.upgrade()
             && ui.get_query().is_empty()
-            && !self.in_appearance.get()
+            && self.view.get() == View::Root
             && self.onboarding.get().is_none()
         {
             self.refresh("");
@@ -609,7 +743,7 @@ impl App {
             keywords: String::new(),
             kind: Kind::Command,
             icon: crate::catalog::Icon::Builtin(icon),
-            tint: 2,
+            tint: 7,
             run,
             path: None,
         };
@@ -678,8 +812,12 @@ impl App {
         let walkthrough = self.onboarding.get();
         let lines = if let Some(step) = walkthrough {
             self.onboarding_lines(step, &config)
-        } else if self.in_appearance.get() {
+        } else if self.view.get() == View::Appearance {
             self.appearance_lines(query, &config)
+        } else if self.view.get() == View::Clipboard {
+            self.clipboard_lines(query)
+        } else if self.view.get() == View::Windows {
+            self.window_lines(query)
         } else {
             let mut lines = if query.trim().is_empty() { self.update_lines() } else { Vec::new() };
             lines.extend(search::lines(
@@ -690,6 +828,11 @@ impl App {
                 &config.quicklink,
                 &mut self.matcher.borrow_mut(),
             ));
+            for line in &mut lines {
+                if let Line::Item(item) = line {
+                    self.decorate(item);
+                }
+            }
             lines
         };
         let compact = a.compact() && walkthrough.is_none();
@@ -846,6 +989,8 @@ impl App {
                 let mut lines = vec![Line::Section("Open Tendril with".into()), Line::Item(shortcut_item())];
                 lines.push(Line::Section("Starting and updating".into()));
                 lines.extend(settings(&["login", "updates", "previews"]));
+                lines.push(Line::Section("Clipboard".into()));
+                lines.extend(settings(&["clipboard_history"]));
                 lines
             }
             2 => std::iter::once(Line::Section("Look".into())).chain(settings(appearance::LOOK)).collect(),
@@ -871,6 +1016,91 @@ impl App {
         lines.push(Line::Section("Everything else".into()));
         lines.push(Line::Item(settings_item()));
         lines
+    }
+
+    /// Clipboard History's rows: copies, newest first, narrowed by what's typed.
+    fn clipboard_lines(&self, query: &str) -> Vec<Line> {
+        if !self.config.borrow().clipboard_history {
+            return vec![Line::Empty("Clipboard history is off. Appearance can turn it on.".into())];
+        }
+        let query = query.trim().to_lowercase();
+        let history = self.history.borrow();
+        let now = clipboard::now();
+        let items: Vec<Item> = history
+            .clips
+            .iter()
+            .filter(|c| query.is_empty() || c.text.to_lowercase().contains(&query))
+            .map(|c| {
+                let lines = c.text.lines().count();
+                let size = if lines > 1 { format!("{lines} lines") } else { format!("{} characters", c.text.chars().count()) };
+                Item {
+                    id: format!("clip:{}", c.id),
+                    title: clipboard::title(&c.text),
+                    subtitle: format!("{} · {size}", ago(now.saturating_sub(c.at))),
+                    keywords: String::new(),
+                    kind: Kind::Clip,
+                    icon: crate::catalog::Icon::Builtin(if clipboard::is_link(&c.text) { "link" } else { "clipboard" }),
+                    tint: 7,
+                    run: Run::Clip(c.id),
+                    path: None,
+                }
+            })
+            .collect();
+        if items.is_empty() {
+            let message =
+                if query.is_empty() { "Nothing copied yet. Text you copy shows up here." } else { "Nothing you've copied matches" };
+            return vec![Line::Empty(message.into())];
+        }
+        std::iter::once(Line::Section("Copied".into())).chain(items.into_iter().map(Line::Item)).collect()
+    }
+
+    /// Switch Windows' rows: open windows, most recently used first.
+    fn window_lines(&self, query: &str) -> Vec<Line> {
+        let query = query.trim().to_lowercase();
+        let catalog = self.catalog.borrow();
+        let items: Vec<Item> = self
+            .windows
+            .borrow()
+            .iter()
+            .filter(|w| query.is_empty() || format!("{} {}", w.title, w.app).to_lowercase().contains(&query))
+            .map(|w| {
+                // The app's own icon and name when it's one Tendril found; X11 names windows by
+                // class ("firefox"), which usually matches the app's file or name.
+                let app = catalog.iter().find(|i| {
+                    i.kind == Kind::Application
+                        && !w.app.is_empty()
+                        && (i.title.eq_ignore_ascii_case(&w.app)
+                            || i.id.to_lowercase().contains(&format!(":{}", w.app.to_lowercase()))
+                            || i.path
+                                .as_ref()
+                                .and_then(|p| p.file_stem())
+                                .is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(&w.app)))
+                });
+                #[cfg(windows)]
+                let fallback = w
+                    .program
+                    .as_ref()
+                    .map_or(crate::catalog::Icon::Builtin("window"), |p| crate::catalog::Icon::Shell(p.to_string_lossy().into_owned()));
+                #[cfg(not(windows))]
+                let fallback = crate::catalog::Icon::Builtin("window");
+                Item {
+                    id: format!("window:{}", w.id),
+                    title: if w.title.is_empty() { w.app.clone() } else { w.title.clone() },
+                    subtitle: app.map_or_else(|| w.app.clone(), |a| a.title.clone()),
+                    keywords: String::new(),
+                    kind: Kind::Window,
+                    icon: app.map_or(fallback, |a| a.icon.clone()),
+                    tint: app.map_or(7, |a| a.tint),
+                    run: Run::Window(w.id),
+                    path: None,
+                }
+            })
+            .collect();
+        if items.is_empty() {
+            let message = if query.is_empty() { "No other windows are open" } else { "No open window matches" };
+            return vec![Line::Empty(message.into())];
+        }
+        std::iter::once(Line::Section("Open windows".into())).chain(items.into_iter().map(Line::Item)).collect()
     }
 
     fn selected_item(&self) -> Option<Item> {
@@ -915,6 +1145,13 @@ impl App {
             }
             Run::Url(url) => fact("Opens", url.clone()),
             Run::Copy(answer) => fact("Copies", answer.clone()),
+            Run::Clip(id) => {
+                if let Some(clip) = self.history.borrow().get(*id) {
+                    fact("Copied", ago(clipboard::now().saturating_sub(clip.at)));
+                    fact("Lines", clip.text.lines().count().to_string());
+                    fact("Characters", clip.text.chars().count().to_string());
+                }
+            }
             Run::Setting(key) => {
                 let config = self.config.borrow();
                 if let Some(s) = appearance::settings(&config).into_iter().find(|s| s.key == *key) {
@@ -936,8 +1173,21 @@ impl App {
                 None => fact("Opened", "Not from Tendril yet".into()),
             }
         }
+        // A copy shows its text where other rows show a description.
+        let subtitle = match &item.run {
+            Run::Clip(id) => self.history.borrow().get(*id).map(|c| {
+                let mut text: String = c.text.chars().take(400).collect();
+                if c.text.chars().count() > 400 {
+                    text.push('…');
+                }
+                text
+            }),
+            _ => None,
+        }
+        .unwrap_or_else(|| item.subtitle.clone());
         let kind = match item.kind {
             Kind::Calculator => "Calculator",
+            Kind::Clip => "Text",
             Kind::Fallback => "Web",
             k => k.label(),
         };
@@ -945,7 +1195,7 @@ impl App {
             icon,
             tint,
             title: item.title.as_str().into(),
-            subtitle: item.subtitle.as_str().into(),
+            subtitle: subtitle.into(),
             kind: kind.into(),
             facts: ModelRc::new(VecModel::from(facts)),
         }
@@ -989,14 +1239,16 @@ impl App {
         }
         *self.config.borrow_mut() = config::load();
         self.start_update_checks();
+        self.start_clipboard();
         self.apply_theme();
         self.apply_appearance();
         self.refresh_keeping(&ui.get_query(), Some(&format!("setting:{key}")));
-        let after = self.config.borrow().appearance.blur;
-        if after != before.appearance.blur && window::needs_restart(after) && self.onboarding.get().is_some() {
+        let after = self.config.borrow().appearance.clone();
+        let renderer_changed = window::wants_gpu(&after) != window::wants_gpu(&before.appearance) && window::needs_restart(&after);
+        if renderer_changed && self.onboarding.get().is_some() {
             self.restart_after_onboarding.set(true);
-            self.toast("Blur changes when you finish", false);
-        } else if after != before.appearance.blur && window::needs_restart(after) {
+            self.toast("That changes when you finish", false);
+        } else if renderer_changed {
             RESTART_TO_APPEARANCE.store(true, Ordering::SeqCst);
             self.toast("Restarting to change how Tendril draws…", false);
             RESTART.store(true, Ordering::SeqCst);
@@ -1067,8 +1319,8 @@ impl App {
 
     fn escape(&self) {
         let Some(ui) = self.ui.upgrade() else { return };
-        if ui.get_query().is_empty() && self.in_appearance.get() {
-            self.leave_appearance(&ui);
+        if ui.get_query().is_empty() && self.view.get() != View::Root {
+            self.leave_view(&ui);
         } else if ui.get_query().is_empty() {
             window::hide(&ui);
         } else {
@@ -1115,7 +1367,7 @@ impl App {
             return;
         }
         if record
-            && !matches!(item.kind, Kind::Calculator | Kind::File)
+            && !matches!(item.kind, Kind::Calculator | Kind::File | Kind::Clip | Kind::Window)
             && !matches!(
                 item.run,
                 Run::Setting(_) | Run::Shortcut | Run::InstallUpdate | Run::InstallPreview | Run::RestartToUpdate | Run::Prefill(_)
@@ -1175,6 +1427,39 @@ impl App {
                     self.install_update(release, true);
                 }
                 Ok(Done::Stay)
+            }
+            Run::Clipboard => {
+                self.open_view(View::Clipboard);
+                Ok(Done::Stay)
+            }
+            Run::Windows => {
+                self.open_view(View::Windows);
+                Ok(Done::Stay)
+            }
+            Run::Clip(id) => {
+                let text = self.history.borrow().get(*id).map(|c| c.text.clone());
+                let Some(text) = text else { return };
+                match system::copy(&text) {
+                    Ok(()) if clipboard::can_paste() => {
+                        window::hide(&ui);
+                        clipboard::paste_soon();
+                        Ok(Done::Stay)
+                    }
+                    Ok(()) => Ok(Done::Toast("Copied. Paste it where you like.".into(), true)),
+                    Err(e) => Err(e),
+                }
+            }
+            Run::Window(id) => match switcher::focus(*id) {
+                Ok(()) => Ok(Done::Hide),
+                Err(e) => Err(e),
+            },
+            Run::ClearClipboard => {
+                {
+                    let mut history = self.history.borrow_mut();
+                    history.clips.clear();
+                    history.save();
+                }
+                Ok(Done::Toast("Clipboard history cleared".into(), false))
             }
             Run::InstallPreview => {
                 self.install_preview();
@@ -1337,6 +1622,38 @@ impl App {
                 self.refresh(&ui.get_query());
             }
             Act::NoPreviews => self.decline_previews(),
+            Act::CopyClip(id) => {
+                let text = self.history.borrow().get(id).map(|c| c.text.clone());
+                match text.map(|t| system::copy(&t)) {
+                    Some(Ok(())) => window::hide(ui),
+                    Some(Err(e)) => self.toast(&format!("Couldn't copy: {e}"), true),
+                    None => {}
+                }
+            }
+            Act::DeleteClip(id) => {
+                {
+                    let mut history = self.history.borrow_mut();
+                    history.remove(id);
+                    history.save();
+                }
+                self.refresh(&ui.get_query());
+            }
+            Act::ClearClips => {
+                {
+                    let mut history = self.history.borrow_mut();
+                    history.clips.clear();
+                    history.save();
+                }
+                self.toast("Clipboard history cleared", false);
+                self.refresh(&ui.get_query());
+            }
+            Act::CloseWindow(id) => match switcher::close(id) {
+                Ok(()) => {
+                    self.windows.borrow_mut().retain(|w| w.id != id);
+                    self.refresh(&ui.get_query());
+                }
+                Err(e) => self.toast(&format!("Couldn't close it: {e}"), true),
+            },
         }
     }
 }
@@ -1396,6 +1713,14 @@ fn actions_for(item: &Item, usage: &Usage) -> Vec<Act> {
         Run::Copy(_) => acts.push(Act::Copy("sum", format!("{} = {}", item.title, item.subtitle))),
         Run::Url(url) => acts.push(Act::Copy("link", url.clone())),
         Run::InstallPreview => acts.push(Act::NoPreviews),
+        Run::Clip(id) => {
+            if crate::clipboard::can_paste() {
+                acts.push(Act::CopyClip(*id));
+            }
+            acts.push(Act::DeleteClip(*id));
+            acts.push(Act::ClearClips);
+        }
+        Run::Window(id) => acts.push(Act::CloseWindow(*id)),
         _ => {}
     }
     if let Some(path) = &item.path {
@@ -1422,6 +1747,10 @@ fn describe(act: &Act, item: &Item, second: bool) -> (String, &'static str, Vec<
         Act::Reveal(_) => (reveal_label().to_string(), "folder", keys, false),
         Act::Forget => ("Reset Ranking".into(), "eraser", keys, true),
         Act::NoPreviews => ("Don't Offer Previews".into(), "eraser", keys, false),
+        Act::CopyClip(_) => ("Copy".into(), "copy", keys, false),
+        Act::DeleteClip(_) => ("Delete This Copy".into(), "eraser", keys, true),
+        Act::ClearClips => ("Clear Clipboard History".into(), "eraser", keys, true),
+        Act::CloseWindow(_) => ("Close Window".into(), "quit", keys, true),
     }
 }
 

@@ -5,8 +5,8 @@ By Loam, alongside [Blight](https://github.com/bluejutzu/blight).
 A keyboard launcher in the style of Raycast. Press Alt+Space, type a few letters, press Enter.
 
 It's a native program: Rust, with the UI drawn by [Slint](https://slint.dev) on the CPU. There's no browser engine
-inside it, no GPU context, no account, no AI and no tracking. The one request it makes is an update check to GitHub,
-which you can turn off. When the window is closed it's destroyed, so between uses Tendril holds a list of your apps and
+inside it, no GPU context (unless you ask for one), no account, no AI and no tracking. What it sends: an update check to
+GitHub, and, once per site, a request for the icon of each website you've made a quicklink to. Both can be turned off. When the window is closed it's destroyed, so between uses Tendril holds a list of your apps and
 little else.
 
 ## Installing
@@ -92,13 +92,24 @@ What you can find:
 - **Quicklinks**: your own links in config.toml. Give one a keyword and `{query}`, and `gh devatloam/tendril` opens
   that repository; leave the keyword out and it's a bookmark you search for by name. Folders work as well as web
   addresses.
+- **Clipboard history**: "Clipboard History" lists the text you've copied, newest first, and narrows as you type.
+  Enter pastes it into the window you were in (Ctrl Enter only copies it); Ctrl K deletes one or clears them all. On X11
+  and Windows Tendril hears about each copy as it happens, without polling; on macOS and Wayland it reads the clipboard
+  when it opens, so you get your latest copy rather than every one in between, and Enter copies rather than pastes.
+  Copies a password manager marks as secret are skipped where the system shows the mark (Windows, and KDE on X11).
+  Kept in `clipboard.json` beside usage.toml, readable only by you; turning it off deletes it.
+- **Switch Windows**: every open window, most recently used first. Enter brings it forward, Ctrl K closes it. X11 and
+  Windows; macOS only shows other apps' windows to apps with the Screen Recording permission, and Wayland doesn't at all.
 - **Themes**: type "theme" for the palettes from Blight's dashboard (Ember, Midnight, Moss, Dusk, Black, Paper, Sepia,
   Mist). Picking one saves it.
 
-White leads and blue highlights, as on Blight's dashboard: the selected row, its icon and Tendril's mark are blue, and
-other colours appear only where they mean something (red for shutting down, green when something worked). Tendril's icons
-are drawn the way the dashboard's are, on Lucide's 24 grid, with an outline and a solid for the selected row;
-`scripts/icons.py` draws both from one description.
+Things that have an icon of their own keep it, in its own colours: apps, files and folders (from your icon theme on
+Linux, from Windows itself there), web searches and links (your default browser's), quicklinks (the site's own). Tendril
+draws icons only for its own commands, the way Blight's dashboard draws them, on Lucide's 24 grid with an outline and a
+solid; `scripts/icons.py` draws both from one description. The selected row is a plain white wash, as in Raycast; blue
+is kept for Tendril's mark and a few small accents, and other colours appear only where they mean something (red for
+shutting down, green when something worked). Appearance can make the selection blue, the icons bolder, or the whole
+thing Modern.
 
 Blight's tumbling shapes and its colour glow are here too. While Tendril looks for apps, a line of clay, blue and green
 runs under the search field and the shapes toss in the bar. When nothing matches, they lie where they fell on a still
@@ -121,6 +132,9 @@ Search for "Appearance". Every row changes with Enter or ← →, shows straight
 | --- | --- |
 | Shortcut | Select it and press new keys |
 | Theme | System, or one of Blight's palettes |
+| Style | Flat (plain fills, drawn on the CPU), or Modern: gradients and a sheen, drawn with the GPU, which keeps tens of megabytes more |
+| Selection | White, or blue |
+| Icons | Subtle squares behind Tendril's icons, or bold ones (with a blue selection, the selected one turns blue) |
 | Blur | See through the window, softened by the system |
 | Blur type | Windows: Acrylic (blurs what's behind), Mica and Mica Alt (tinted by your wallpaper, Windows 11), Blur (Windows 10). macOS: HUD, Popover, Sidebar, Menu, Under window. Not on Linux, where the compositor decides |
 | Opacity | 60 to 100%, while blurred |
@@ -133,10 +147,13 @@ Search for "Appearance". Every row changes with Enter or ← →, shows straight
 | Headings | Above each group |
 | Close on click away | |
 | Open at login | Starts hidden when you log in |
+| Clipboard history | On or off; off deletes what's kept |
+| Website icons | Quicklinks with their site's icon, fetched once from that site |
 | Updates | Automatic, Tell me, or Off |
 | Preview versions | Ask, Always, or Never |
 
-Turning blur on or off where it needs the GPU renderer restarts Tendril, which takes about a second.
+Switching between Flat and Modern, or blur on or off where it needs the GPU renderer, restarts Tendril, which takes
+about a second.
 
 ### Where the blur comes from
 
@@ -253,6 +270,10 @@ src/
   ipc.rs         the socket behind `tendril toggle`
   update.rs      checking GitHub for a new version or preview, and putting it in place
   paths.rs       listing a folder as you type its path
+  clipboard.rs   clipboard history: hearing about copies (XFixes, a Windows listener), keeping them, pasting
+  switcher.rs    open windows: listing, bringing forward, closing
+  browser.rs     which browser is the default, for its icon
+  sites.rs       fetching and keeping quicklinks' site icons
   usage.rs       what you open, for ranking
   config.rs      config.toml
   palettes.rs    Blight's palettes
@@ -281,7 +302,10 @@ for both targets, but hasn't been run on either system yet, so expect rough edge
 the macOS materials), open at login, window placement on more than one screen, focus returning to the previous app on
 macOS, and app icons on macOS (read from `.icns` files, which some newer apps no longer ship).
 
-Not done yet: clipboard history, file search, snippets, extensions, a tray icon.
+Clipboard history and Switch Windows have been tried under X11 (with Openbox) only; their Windows code compiles and
+passes clippy but hasn't run yet. Website icons couldn't be tried against real sites from where this was built.
+
+Not done yet: file search, snippets, extensions, a tray icon, switching windows on macOS.
 
 ## Licence
 

@@ -35,9 +35,19 @@ pub fn needs_gpu_for_blur() -> bool {
     cfg!(any(windows, target_os = "macos")) || (cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some())
 }
 
-/// Whether turning blur on or off here needs Tendril to start again with another renderer.
-pub fn needs_restart(blur: bool) -> bool {
-    needs_gpu_for_blur() && blur != GPU.load(Ordering::Relaxed)
+/// Whether these settings want the GPU renderer: blur where the CPU can't see through, or the
+/// Modern style, whose gradients only the GPU rounds.
+pub fn wants_gpu(a: &crate::config::Appearance) -> bool {
+    (a.blur && needs_gpu_for_blur()) || a.style == "modern"
+}
+
+pub fn is_gpu() -> bool {
+    GPU.load(Ordering::Relaxed)
+}
+
+/// Whether these settings need Tendril to start again with the other renderer.
+pub fn needs_restart(a: &crate::config::Appearance) -> bool {
+    wants_gpu(a) != is_gpu()
 }
 
 /// A blur this soon after opening is the window manager settling, not you clicking away.

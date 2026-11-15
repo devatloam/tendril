@@ -29,6 +29,10 @@ pub fn with_app(f: impl FnOnce(&Rc<App>)) {
 const KEEP_QUERY: Duration = Duration::from_secs(90);
 /// Apps are looked for again on opening, at most this often.
 const RESCAN_AFTER: Duration = Duration::from_secs(120);
+/// The least time the "looking for apps" shapes stay up.
+const MIN_BUSY: Duration = Duration::from_millis(900);
+/// How long after opening a hover is taken to be the pointer already being there.
+const POINTER_SETTLE: Duration = Duration::from_millis(400);
 
 pub struct App {
     pub ui: slint::Weak<Launcher>,
@@ -48,6 +52,7 @@ pub struct App {
     toast_timer: Timer,
     scanned_at: Cell<Option<Instant>>,
     scanning: Cell<bool>,
+    app_count: Cell<usize>,
     pub hidden_at: Cell<Option<Instant>>,
     pub shown_at: Cell<Option<Instant>>,
     hotkeys: RefCell<Option<crate::hotkey::Hotkeys>>,
@@ -85,6 +90,7 @@ impl App {
             toast_timer: Timer::default(),
             scanned_at: Cell::new(None),
             scanning: Cell::new(false),
+            app_count: Cell::new(0),
             hidden_at: Cell::new(None),
             shown_at: Cell::new(None),
             hotkeys: RefCell::new(None),
@@ -111,6 +117,14 @@ impl App {
         ui.on_answer(|yes| with_app(|a| a.answer(yes)));
         ui.on_settings(|| with_app(|a| a.run(&settings_item(), false)));
         ui.on_scheme_changed(|| with_app(|a| a.apply_theme()));
+        ui.on_close_about(|| {
+            with_app(|a| {
+                if let Some(ui) = a.ui.upgrade() {
+                    ui.set_about_open(false);
+                    ui.invoke_focus_search();
+                }
+            })
+        });
     }
 
     pub fn set_hotkeys(&self, hotkeys: crate::hotkey::Hotkeys) {
@@ -168,6 +182,7 @@ impl App {
     fn close_overlays(&self, ui: &Launcher) {
         ui.set_actions_open(false);
         ui.set_confirm_open(false);
+        ui.set_about_open(false);
         self.pending.take();
     }
 
@@ -176,12 +191,26 @@ impl App {
         if self.scanning.replace(true) {
             return;
         }
+        self.set_busy(true);
+        let started = Instant::now();
         let spawned = std::thread::Builder::new().name("scan".into()).spawn(move || {
             let found = apps::scan();
+            // A scan can finish in a few milliseconds; keep the shapes up long enough to be seen
+            // rather than flashing.
+            if let Some(rest) = MIN_BUSY.checked_sub(started.elapsed()) {
+                std::thread::sleep(rest);
+            }
             let _ = slint::invoke_from_event_loop(move || with_app(|a| a.scanned(found, tell)));
         });
         if spawned.is_err() {
             self.scanning.set(false);
+            self.set_busy(false);
+        }
+    }
+
+    fn set_busy(&self, busy: bool) {
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_busy(busy);
         }
     }
 
@@ -191,6 +220,8 @@ impl App {
         found.extend(crate::catalog::commands());
         *self.catalog.borrow_mut() = found;
         self.scanning.set(false);
+        self.set_busy(false);
+        self.app_count.set(count);
         self.scanned_at.set(Some(Instant::now()));
         if let Some(ui) = self.ui.upgrade() {
             self.refresh(&ui.get_query());
@@ -220,6 +251,11 @@ impl App {
                     rows.push(Row { kind: 0, y, height, title: title.into(), ..Default::default() });
                     items.push(None);
                     y += height;
+                }
+                Line::Empty(message) => {
+                    rows.push(Row { kind: 3, y, height: 150.0, title: message.into(), ..Default::default() });
+                    items.push(None);
+                    y += 150.0;
                 }
                 Line::Item(item) => {
                     let calc = item.kind == Kind::Calculator;
@@ -265,6 +301,11 @@ impl App {
 
     fn select(&self, i: i32, by_pointer: bool) {
         let Some(ui) = self.ui.upgrade() else { return };
+        // A pointer resting where the window opens reports itself as a hover; only a pointer
+        // moved after opening should take the selection off the first row.
+        if by_pointer && self.shown_at.get().is_some_and(|t| t.elapsed() < POINTER_SETTLE) {
+            return;
+        }
         let ok = usize::try_from(i).ok().and_then(|i| self.items.borrow().get(i).map(Option::is_some)).unwrap_or(false);
         if ok && !ui.get_actions_open() {
             ui.set_glide(!by_pointer);
@@ -349,6 +390,15 @@ impl App {
             }
             Run::Reload => {
                 self.rescan(true);
+                Ok(Done::Stay)
+            }
+            Run::About => {
+                let apps = self.app_count.get();
+                ui.set_about_detail(
+                    format!("Version {} · {apps} {} found", env!("CARGO_PKG_VERSION"), if apps == 1 { "app" } else { "apps" }).into(),
+                );
+                ui.set_actions_open(false);
+                ui.set_about_open(true);
                 Ok(Done::Stay)
             }
             Run::Quit => {

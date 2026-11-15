@@ -1,0 +1,228 @@
+// The tumbling shapes and the drifting glow from Blight's loading screen (the dashboard's
+// feedback/tumble.tsx and page-loader.tsx), with the same shapes, colours and timings.
+//
+// The CPU renderer can't rotate an element, so each shape is a Path whose corners are turned
+// and squashed here. Anything that moves reads animation-tick(), which only ticks while the
+// element exists, so all of this is put on screen with `if` and costs nothing once it's gone.
+
+import { Theme } from "theme.slint";
+
+// One shape at one pose. Drawn in a 32-unit box around its centre so a squash or a turn never
+// reaches the edge; the shape itself is 24 units across, as Blight's are 24px.
+component Shape inherits Path {
+    in property <int> kind; // 0 square, 1 circle, 2 triangle
+    in property <angle> spin;
+    in property <float> sx: 1;
+    in property <float> sy: 1;
+    in property <color> colour;
+    property <float> c: Math.cos(spin);
+    property <float> s: Math.sin(spin);
+    pure function r(v: float) -> float {
+        return Math.round(v * 100) / 100;
+    }
+    // A point of the shape, squashed and then turned, as CSS applies `rotate() scale()`.
+    pure function p(x: float, y: float) -> string {
+        return r(x * sx * c - y * sy * s) + " " + r(x * sx * s + y * sy * c) + " ";
+    }
+    viewbox-x: -16;
+    viewbox-y: -16;
+    viewbox-width: 32;
+    viewbox-height: 32;
+    fill: colour;
+    stroke-width: 0;
+    commands: kind == 1
+        ? "M " + p(-12, 0) + "A " + r(12 * sx) + " " + r(12 * sy) + " " + r(spin / 1deg) + " 1 0 " + p(12, 0) + "A " + r(12 * sx) + " " + r(12 * sy) + " " + r(spin / 1deg) + " 1 0 " + p(-12, 0) + "Z"
+        : kind == 0
+        ? "M " + p(-6, -12) + "L " + p(6, -12) + "Q " + p(12, -12) + p(12, -6) + "L " + p(12, 6) + "Q " + p(12, 12) + p(6, 12) + "L " + p(-6, 12) + "Q " + p(-12, 12) + p(-12, 6) + "L " + p(-12, -6) + "Q " + p(-12, -12) + p(-6, -12) + "Z"
+        : "M " + p(0, -12) + "L " + p(12, 12) + "L " + p(-12, 12) + "Z";
+}
+
+// A shape somewhere in its throw. `f` runs 0 to 1: crouched, thrown up turning, caught, crouched.
+component Thrown {
+    in property <int> kind;
+    in property <color> colour;
+    in property <length> size;
+    in property <float> f;
+    in property <bool> still;
+    in property <angle> rest-spin;
+    in property <length> rest-drop;
+    property <length> lift: size * 34 / 24;
+    pure function ease(u: float) -> float {
+        return u * u * (3 - 2 * u);
+    }
+    property <float> up: still ? 0 : f < 0.15 ? 0 : f < 0.5 ? ease((f - 0.15) / 0.35) : f < 0.85 ? 1 - ease((f - 0.5) / 0.35) : 0;
+    property <float> turn: still ? 0 : f < 0.15 ? 0 : f < 0.5 ? ease((f - 0.15) / 0.35) / 2 : f < 0.85 ? 0.5 + ease((f - 0.5) / 0.35) / 2 : 0;
+    property <float> squash: still ? 0 : f < 0.15 ? 1 - ease(f / 0.15) : f >= 0.85 ? ease((f - 0.85) / 0.15) : 0;
+    width: size;
+    height: size + lift;
+    Shape {
+        width: size * 32 / 24;
+        height: self.width;
+        x: (size - self.width) / 2;
+        y: lift * (1 - up) + (size - self.height) / 2 + (still ? rest-drop : 0);
+        kind: kind;
+        colour: colour;
+        spin: still ? rest-spin : turn * 360deg;
+        sx: 1 + 0.15 * squash;
+        sy: 1 - 0.15 * squash;
+    }
+}
+
+// Three shapes thrown up and caught, one after the other.
+//   mode 0, toss: over and over, for something you're waiting on
+//   mode 1, rest: lying where they fell, for an empty list
+//   mode 2, hop:  thrown twice and caught, when something worked
+export component Tumble {
+    in property <length> size: 24px;
+    in property <int> mode;
+    property <length> gap: size * 16 / 24;
+    // Counted from when this element appears, so every toss starts from the crouch.
+    property <duration> born;
+    property <float> t: mode == 0 ? (animation-tick() - born) / 1ms : 0;
+    // The hop runs once, from when this element is made: 0 to 2 throws, a little over to settle.
+    property <float> hop: 0;
+    animate hop {
+        duration: 2000ms;
+        easing: linear;
+    }
+    init => {
+        born = animation-tick();
+        if mode == 2 {
+            hop = 2.2;
+        }
+    }
+    pure function f(delay: float) -> float {
+        if mode == 0 {
+            return Math.mod(t + 9000 - delay, 900) / 900;
+        }
+        if max(0, hop - delay / 900) >= 1.85 {
+            return 0.85;
+        }
+        return max(0, hop - delay / 900) - floor(max(0, hop - delay / 900));
+    }
+    width: size * 3 + gap * 2;
+    height: size + size * 34 / 24;
+    Thrown {
+        x: 0;
+        kind: 0;
+        colour: Theme.accent;
+        size: size;
+        f: f(0);
+        still: mode == 1;
+        rest-spin: -12deg;
+        rest-drop: 0;
+    }
+    Thrown {
+        x: size + gap;
+        kind: 1;
+        colour: Theme.blue;
+        size: size;
+        f: f(120);
+        still: mode == 1;
+        rest-drop: size / 12;
+    }
+    Thrown {
+        x: (size + gap) * 2;
+        kind: 2;
+        colour: Theme.green;
+        size: size;
+        f: f(240);
+        still: mode == 1;
+        rest-spin: 18deg;
+        rest-drop: size / 8;
+    }
+}
+
+// One soft patch of colour, wandering a little and back over nine seconds.
+component Blob inherits Rectangle {
+    in property <color> colour;
+    in property <float> strength;
+    in property <float> t;
+    in property <float> start;
+    in property <length> home-x;
+    in property <length> home-y;
+    in property <length> across;
+    property <float> leg: Math.mod(t / 9000 + start, 2);
+    property <float> wander: (leg < 1 ? leg : 2 - leg) * (leg < 1 ? leg : 2 - leg) * (3 - 2 * (leg < 1 ? leg : 2 - leg));
+    width: across * (1 + 0.08 * wander);
+    height: self.width;
+    x: home-x - self.width / 2 + 24px * wander;
+    y: home-y - self.height / 2 - 18px * wander;
+    background: @radial-gradient(circle, colour.with-alpha(strength) 0%, colour.with-alpha(strength * 0.5) 30%, colour.with-alpha(0) 66%);
+}
+
+// Clay, blue and green drifting behind whatever sits on top, as behind Blight's loading card.
+export component Glow inherits Rectangle {
+    in property <bool> moving: true;
+    in property <float> strength: Theme.dark ? 0.16 : 0.22;
+    in property <length> across: min(self.width, self.height) * 1.1;
+    property <float> t: moving ? animation-tick() / 1ms : 0;
+    clip: true;
+    Blob {
+        colour: Theme.accent;
+        strength: strength;
+        t: t;
+        start: 0;
+        across: across;
+        home-x: parent.width / 2 - across * 0.4;
+        home-y: parent.height / 2 - across * 0.2;
+    }
+    Blob {
+        colour: Theme.blue;
+        strength: strength;
+        t: t;
+        start: 0.66;
+        across: across;
+        home-x: parent.width / 2 + across * 0.36;
+        home-y: parent.height / 2 - across * 0.04;
+    }
+    Blob {
+        colour: Theme.green;
+        strength: strength;
+        t: t;
+        start: 1.33;
+        across: across;
+        home-x: parent.width / 2 - across * 0.04;
+        home-y: parent.height / 2 + across * 0.3;
+    }
+}
+
+// The line under the search field that colour runs along while Flint is working, with Blight's
+// loader keyframes: a third of the width, from just off the left to past the right.
+export component Sweep inherits Rectangle {
+    property <duration> born;
+    init => {
+        born = animation-tick();
+    }
+    property <float> u: Math.mod((animation-tick() - born) / 1ms, 1100) / 1100;
+    property <float> eased: 1 - (1 - u) * (1 - u) * (1 - u);
+    height: 2px;
+    clip: true;
+    // Four two-colour pieces end to end: the CPU renderer draws a gradient with more stops
+    // than two with a gap in it.
+    Rectangle {
+        width: parent.width * 0.35;
+        x: self.width * (-1 + 4 * eased);
+        property <length> piece: self.width / 4;
+        Rectangle {
+            x: 0;
+            width: piece;
+            background: @linear-gradient(90deg, Theme.accent.with-alpha(0) 0%, Theme.accent 100%);
+        }
+        Rectangle {
+            x: piece;
+            width: piece;
+            background: @linear-gradient(90deg, Theme.accent 0%, Theme.blue 100%);
+        }
+        Rectangle {
+            x: piece * 2;
+            width: piece;
+            background: @linear-gradient(90deg, Theme.blue 0%, Theme.green 100%);
+        }
+        Rectangle {
+            x: piece * 3;
+            width: piece;
+            background: @linear-gradient(90deg, Theme.green 0%, Theme.green.with-alpha(0) 100%);
+        }
+    }
+}

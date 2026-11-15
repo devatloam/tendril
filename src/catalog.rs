@@ -43,6 +43,7 @@ pub enum Run {
     Theme(&'static str),
     Settings,
     Reload,
+    About,
     Quit,
 }
 
@@ -99,6 +100,7 @@ pub fn commands() -> Vec<Item> {
         Item::command("shutdown", "Shut Down", "power off poweroff turn off", "power", 4, Run::Power(Power::ShutDown)),
         Item::command("settings", "Flint Settings", "preferences config hotkey", "settings", 7, Run::Settings),
         Item::command("reload", "Reload Apps", "refresh rescan", "refresh", 3, Run::Reload),
+        Item::command("about", "About Flint", "version info", "bolt", 1, Run::About),
         Item::command("quit", "Quit Flint", "exit close", "quit", 7, Run::Quit),
     ];
     for p in crate::palettes::PALETTES {

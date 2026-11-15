@@ -14,6 +14,7 @@ slint = { version = "1.18.1", default-features = false, features = [
   "backend-winit",
   "renderer-winit-software",
   "software-renderer-systemfonts",
+  "software-renderer-path",
   "image-default-formats",
   "unstable-winit-030",
 ] }

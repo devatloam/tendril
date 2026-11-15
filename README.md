@@ -11,8 +11,10 @@ between uses Flint holds a list of your apps and little else.
 | Searching                          | The calculator                             | Actions (Ctrl K)                     |
 | ---------------------------------- | ------------------------------------------ | ------------------------------------ |
 | ![Searching](docs/search.png)      | ![The calculator](docs/calculator.png)     | ![Actions](docs/actions.png)         |
-| **Before logging out or similar**  | **A light palette (Sepia)**                |                                      |
-| ![Confirming](docs/confirm.png)    | ![Sepia](docs/light.png)                   |                                      |
+| **Before logging out or similar**  | **A light palette (Sepia)**                | **Looking for apps**                 |
+| ![Confirming](docs/confirm.png)    | ![Sepia](docs/light.png)                   | ![Loading](docs/loading.png)         |
+| **Nothing found**                  | **About Flint**                            |                                      |
+| ![Nothing found](docs/nothing.png) | ![About Flint](docs/about.png)             |                                      |
 
 ## What it costs
 
@@ -53,6 +55,10 @@ What you can find:
   something that looks like a link, like `github.com/rust-lang`, can be opened directly.
 - **Themes**: type "theme" for the palettes from Blight's dashboard (Ember, Midnight, Moss, Dusk, Black, Paper, Sepia,
   Mist). Picking one saves it.
+
+Blight's tumbling shapes and its colour glow are here too. While Flint looks for apps, a line of clay, blue and green
+runs under the search field and the shapes toss in the bar. When nothing matches, they lie where they fell on a still
+glow. When something works, like copying an answer, they hop twice. "About Flint" shows them over the drifting glow.
 
 Flint remembers what you pick for what you type, so if `f` once led you to Firefox, `f` puts Firefox first next time.
 That's kept in `usage.toml` on your computer and nowhere else. Ctrl K → Reset Ranking forgets an item.
@@ -106,6 +112,7 @@ Wayland also decides where windows go, so Flint can't centre itself there.
 ui/              the window, in Slint's markup
   app.slint      the launcher: search field, list, the bar along the bottom, keyboard handling
   parts.slint    rows, the calculator card, the actions panel, the confirm dialog, keycaps
+  motion.slint   the tumbling shapes, the drifting glow and the loading line
   theme.slint    colour tokens (set from Rust) and motion timings
   icons/         Flint's own glyphs, drawn on tinted squares
 src/
@@ -130,6 +137,9 @@ Things that keep it light, if you're changing it:
 - **Nothing draws while closed.** Hiding destroys the window (`SLINT_DESTROY_WINDOW_ON_HIDE`) and drops the text
   field's focus, which stops the caret's blink timer.
 - **Nothing polls.** The hotkey thread, the socket thread and the event loop all sleep until something happens.
+- **Animations exist only while they're on screen.** The shapes, the glow and the loading line are each put on screen
+  with an `if` and read `animation-tick()`, which stops once they're gone. Slint's CPU renderer can't rotate an
+  element, so the shapes are paths whose corners `motion.slint` turns itself.
 - **Icons load when a row first shows them**, and anything bigger than 64px is scaled down before it's kept.
 - **Apps are found on a background thread** at start and when the window opens, at most every two minutes.
 

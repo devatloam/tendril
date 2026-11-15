@@ -10,6 +10,8 @@ use nucleo_matcher::{Matcher, Utf32Str};
 pub enum Line {
     Section(String),
     Item(Item),
+    /// Nothing matched: said over the shapes at rest, above the web searches.
+    Empty(String),
 }
 
 const MAX_RESULTS: usize = 40;
@@ -41,6 +43,8 @@ pub fn lines(query: &str, catalog: &[Item], usage: &Usage, engines: &[Engine], m
     if !matches.is_empty() {
         lines.push(Line::Section("Results".into()));
         lines.extend(matches.into_iter().map(|i| Line::Item(i.clone())));
+    } else if lines.is_empty() {
+        lines.push(Line::Empty(format!("No apps or commands match “{}”", shorten(query, 40))));
     }
 
     lines.push(Line::Section(format!("Use “{}” with…", shorten(query, 40))));
@@ -207,6 +211,20 @@ mod tests {
         assert!(titles("shut", &usage).iter().all(|t| t == "Shut Down"), "{:?}", titles("shut", &usage));
         assert!(titles("calc", &usage).is_empty(), "{:?}", titles("calc", &usage));
         assert_eq!(titles("colo", &usage).len(), crate::palettes::PALETTES.len());
+    }
+
+    #[test]
+    fn says_when_nothing_matches() {
+        let catalog = commands();
+        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
+        let lines = lines("zzqx", &catalog, &Usage::default(), &[], &mut matcher);
+        assert!(matches!(lines.first(), Some(Line::Empty(m)) if m.contains("zzqx")));
+        let lines = lines_for_sum(&catalog, &mut matcher);
+        assert!(!lines.iter().any(|l| matches!(l, Line::Empty(_))), "a sum isn't 'nothing found'");
+    }
+
+    fn lines_for_sum(catalog: &[Item], matcher: &mut Matcher) -> Vec<Line> {
+        lines("2+2", catalog, &Usage::default(), &[], matcher)
     }
 
     #[test]

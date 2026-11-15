@@ -138,24 +138,26 @@ impl Item {
 }
 
 pub fn commands() -> Vec<Item> {
+    // Before you type, in this order: what you came for first, power commands last, so the first
+    // row under your hand is never Shut Down.
     let mut items = vec![
+        Item::command("clipboard", "Clipboard History", "clipboard copied paste history clip", "clipboard", 7, Run::Clipboard),
+        Item::command("clear-clipboard", "Clear Clipboard History", "clipboard forget delete copied", "eraser", 7, Run::ClearClipboard),
+        Item::command("appearance", "Appearance", "settings look theme blur glow compact details grid keys", "palette", 7, Run::Appearance),
+        Item::command("settings", "Tendril Settings", "preferences config hotkey", "settings", 7, Run::Settings),
+        Item::command("updates", "Check for Updates", "update upgrade new version", "download", 7, Run::CheckUpdates),
+        Item::command("reload", "Reload Apps", "refresh rescan", "refresh", 7, Run::Reload),
+        Item::command("setup", "Set Up Tendril", "onboarding welcome walkthrough shortcut hotkey", "wave", 7, Run::Onboarding),
+        Item::command("about", "About Tendril", "version info", "tendril", 7, Run::About),
         Item::command("lock", "Lock Screen", "lock away", "lock", 7, Run::Power(Power::Lock)),
         Item::command("sleep", "Sleep", "suspend", "moon", 7, Run::Power(Power::Sleep)),
         Item::command("logout", "Log Out", "sign out logoff", "logout", 7, Run::Power(Power::LogOut)),
         Item::command("restart", "Restart", "reboot", "restart", 7, Run::Power(Power::Restart)),
         Item::command("shutdown", "Shut Down", "power off poweroff turn off", "power", 4, Run::Power(Power::ShutDown)),
-        Item::command("settings", "Tendril Settings", "preferences config hotkey", "settings", 7, Run::Settings),
-        Item::command("reload", "Reload Apps", "refresh rescan", "refresh", 7, Run::Reload),
-        Item::command("appearance", "Appearance", "settings look theme blur glow compact details grid keys", "palette", 7, Run::Appearance),
-        Item::command("clipboard", "Clipboard History", "clipboard copied paste history clip", "clipboard", 7, Run::Clipboard),
-        Item::command("clear-clipboard", "Clear Clipboard History", "clipboard forget delete copied", "eraser", 7, Run::ClearClipboard),
-        Item::command("updates", "Check for Updates", "update upgrade new version", "download", 7, Run::CheckUpdates),
-        Item::command("setup", "Set Up Tendril", "onboarding welcome walkthrough shortcut hotkey", "wave", 7, Run::Onboarding),
-        Item::command("about", "About Tendril", "version info", "tendril", 7, Run::About),
         Item::command("quit", "Quit Tendril", "exit close", "quit", 7, Run::Quit),
     ];
     if crate::switcher::available() {
-        items.push(Item::command("windows", "Switch Windows", "window switch focus alt tab open windows", "windows", 7, Run::Windows));
+        items.insert(1, Item::command("windows", "Switch Windows", "window switch focus alt tab open windows", "windows", 7, Run::Windows));
     }
     for p in crate::palettes::PALETTES {
         let mut item = Item::command(

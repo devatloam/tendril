@@ -5,7 +5,7 @@ use crate::config::{self, Config};
 use crate::icons::Icons;
 use crate::search::{self, Line};
 use crate::usage::Usage;
-use crate::{ActionRow, Detail, Fact, Launcher, Row, Theme, appearance, apps, palettes, system, window};
+use crate::{ActionRow, Detail, Fact, Launcher, Row, Theme, appearance, apps, palettes, system, update, window};
 use nucleo_matcher::Matcher;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, VecModel};
 use std::cell::{Cell, RefCell};
@@ -39,6 +39,23 @@ pub static RESTART: AtomicBool = AtomicBool::new(false);
 /// Whether the next Tendril opens on the Appearance view.
 pub static RESTART_TO_APPEARANCE: AtomicBool = AtomicBool::new(false);
 
+/// Whether the update thread may ask GitHub. Kept in step with config.toml by the UI thread, and
+/// read by the update thread before every check.
+static UPDATES_ON: AtomicBool = AtomicBool::new(false);
+/// How often to look for a new version while Tendril runs. The thread sleeps in between.
+const UPDATE_EVERY: Duration = Duration::from_secs(6 * 3600);
+/// The first look, a little after starting, so it doesn't slow the first open.
+const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(30);
+
+/// Where an update stands.
+enum UpdateState {
+    Quiet,
+    Available(update::Release),
+    Installing(String),
+    /// Installed; used from the next start.
+    Ready(String),
+}
+
 /// The walkthrough's steps: welcome, shortcut, look, layout, done.
 const STEPS: usize = 5;
 
@@ -49,6 +66,8 @@ pub struct App {
     pub ui: slint::Weak<Launcher>,
     pub config: RefCell<Config>,
     catalog: RefCell<Vec<Item>>,
+    /// The apps last found, kept apart so the catalog can be rebuilt when quicklinks change.
+    apps: RefCell<Vec<Item>>,
     /// Beside each row: the item it shows, or None for a heading.
     items: RefCell<Vec<Option<Item>>>,
     rows: Rc<VecModel<Row>>,
@@ -63,6 +82,10 @@ pub struct App {
     toast_timer: Timer,
     scanned_at: Cell<Option<Instant>>,
     scanning: Cell<bool>,
+    update: RefCell<UpdateState>,
+    /// Checking or downloading an update right now.
+    updating: Cell<bool>,
+    update_thread: Cell<bool>,
     app_count: Cell<usize>,
     pub hidden_at: Cell<Option<Instant>>,
     pub shown_at: Cell<Option<Instant>>,
@@ -100,6 +123,7 @@ impl App {
             ui: ui.as_weak(),
             config: RefCell::new(config),
             catalog: RefCell::new(crate::catalog::commands()),
+            apps: RefCell::default(),
             items: RefCell::default(),
             rows,
             usage: RefCell::new(Usage::load()),
@@ -113,6 +137,9 @@ impl App {
             toast_timer: Timer::default(),
             scanned_at: Cell::new(None),
             scanning: Cell::new(false),
+            update: RefCell::new(UpdateState::Quiet),
+            updating: Cell::new(false),
+            update_thread: Cell::new(false),
             app_count: Cell::new(0),
             hidden_at: Cell::new(None),
             shown_at: Cell::new(None),
@@ -230,6 +257,8 @@ impl App {
     pub fn opening(&self) {
         let Some(ui) = self.ui.upgrade() else { return };
         *self.config.borrow_mut() = config::load();
+        self.rebuild_catalog();
+        self.start_update_checks();
         if let Some(hotkeys) = &*self.hotkeys.borrow() {
             hotkeys.set(&self.config.borrow().hotkey);
         }
@@ -383,17 +412,171 @@ impl App {
         }
     }
 
-    fn set_busy(&self, busy: bool) {
+    /// Apps, then Tendril's commands, then your quicklinks.
+    fn rebuild_catalog(&self) {
+        let mut catalog = self.apps.borrow().clone();
+        catalog.extend(crate::catalog::commands());
+        catalog.extend(crate::catalog::quicklinks(&self.config.borrow().quicklink));
+        *self.catalog.borrow_mut() = catalog;
+    }
+
+    fn set_busy(&self, _: bool) {
         if let Some(ui) = self.ui.upgrade() {
-            ui.set_busy(busy);
+            let label = if self.updating.get() { "Updating Tendril…" } else { "Looking for apps…" };
+            ui.set_busy_label(label.into());
+            ui.set_busy(self.scanning.get() || self.updating.get());
         }
+    }
+
+    /// Starts the thread that looks for new versions, if updates are on and it isn't running.
+    pub fn start_update_checks(&self) {
+        let on = self.config.borrow().updates != "off";
+        UPDATES_ON.store(on, Ordering::Relaxed);
+        if !on || self.update_thread.replace(true) {
+            return;
+        }
+        let _ = std::thread::Builder::new().name("updates".into()).stack_size(512 * 1024).spawn(|| {
+            std::thread::sleep(FIRST_UPDATE_CHECK);
+            loop {
+                if UPDATES_ON.load(Ordering::Relaxed) {
+                    let result = update::latest();
+                    let _ = slint::invoke_from_event_loop(move || with_app(|a| a.update_checked(result, false)));
+                }
+                std::thread::sleep(UPDATE_EVERY);
+            }
+        });
+    }
+
+    /// "Check for Updates": now, and say what came of it.
+    fn check_updates_now(&self) {
+        if self.updating.replace(true) {
+            return;
+        }
+        self.set_busy(true);
+        let spawned = std::thread::Builder::new().name("update-check".into()).spawn(|| {
+            let result = update::latest();
+            let _ = slint::invoke_from_event_loop(move || {
+                with_app(|a| {
+                    a.updating.set(false);
+                    a.set_busy(false);
+                    a.update_checked(result, true);
+                })
+            });
+        });
+        if spawned.is_err() {
+            self.updating.set(false);
+            self.set_busy(false);
+        }
+    }
+
+    fn update_checked(&self, result: Result<Option<update::Release>, String>, asked: bool) {
+        let ours = env!("CARGO_PKG_VERSION");
+        let mode = self.config.borrow().updates.clone();
+        if mode == "off" && !asked {
+            return;
+        }
+        match result {
+            Ok(Some(release)) if update::newer(&release.version, ours) => {
+                let known = match &*self.update.borrow() {
+                    UpdateState::Ready(v) | UpdateState::Installing(v) => *v == release.version,
+                    _ => false,
+                };
+                if known {
+                    if asked {
+                        self.toast(&format!("Tendril {} is already on its way", release.version), false);
+                    }
+                    return;
+                }
+                if mode == "auto" && update::cannot_install(&release).is_none() {
+                    self.install_update(release, asked);
+                } else {
+                    if asked {
+                        self.toast(&format!("Tendril {} is out", release.version), false);
+                    }
+                    *self.update.borrow_mut() = UpdateState::Available(release);
+                    self.refresh_if_root();
+                }
+            }
+            Ok(_) if asked => self.toast(&format!("You're on the latest version ({ours})"), false),
+            Ok(_) => {}
+            Err(e) if asked => self.toast(&format!("Couldn't check for updates: {e}"), true),
+            Err(_) => {}
+        }
+    }
+
+    fn install_update(&self, release: update::Release, asked: bool) {
+        *self.update.borrow_mut() = UpdateState::Installing(release.version.clone());
+        self.updating.set(true);
+        self.set_busy(true);
+        let spawned = std::thread::Builder::new().name("update-install".into()).spawn(move || {
+            let result = update::install(&release);
+            let _ = slint::invoke_from_event_loop(move || {
+                with_app(|a| {
+                    a.updating.set(false);
+                    a.set_busy(false);
+                    match result {
+                        Ok(()) => {
+                            a.toast(&format!("Updated to {}. It starts next time.", release.version), false);
+                            *a.update.borrow_mut() = UpdateState::Ready(release.version.clone());
+                        }
+                        Err(e) => {
+                            if asked {
+                                a.toast(&format!("Couldn't update: {e}"), true);
+                            }
+                            *a.update.borrow_mut() = UpdateState::Available(release);
+                        }
+                    }
+                    a.refresh_if_root();
+                })
+            });
+        });
+        if spawned.is_err() {
+            self.updating.set(false);
+            self.set_busy(false);
+        }
+    }
+
+    /// Rebuilds the list if it's showing the root, where update rows live.
+    fn refresh_if_root(&self) {
+        if let Some(ui) = self.ui.upgrade()
+            && ui.get_query().is_empty()
+            && !self.in_appearance.get()
+            && self.onboarding.get().is_none()
+        {
+            self.refresh("");
+        }
+    }
+
+    /// The row offering an update, at the top of the list before you type.
+    fn update_lines(&self) -> Vec<Line> {
+        let row = |title: String, subtitle: String, run: Run| Item {
+            id: "update".into(),
+            title,
+            subtitle,
+            keywords: String::new(),
+            kind: Kind::Command,
+            icon: crate::catalog::Icon::Builtin("download"),
+            tint: 2,
+            run,
+            path: None,
+        };
+        let ours = env!("CARGO_PKG_VERSION");
+        let item = match &*self.update.borrow() {
+            UpdateState::Available(r) => match update::cannot_install(r) {
+                None => row(format!("Update to {}", r.version), format!("You have {ours}"), Run::InstallUpdate),
+                Some(_) => row(format!("Tendril {} is out", r.version), "Open the release page".into(), Run::Url(r.page.clone())),
+            },
+            UpdateState::Ready(v) => row("Restart to Finish Updating".into(), format!("to {v}"), Run::RestartToUpdate),
+            UpdateState::Quiet | UpdateState::Installing(_) => return Vec::new(),
+        };
+        vec![Line::Section("Update".into()), Line::Item(item)]
     }
 
     fn scanned(&self, mut found: Vec<Item>, tell: bool) {
         let count = found.len();
         found.sort_by_key(|a| a.title.to_lowercase());
-        found.extend(crate::catalog::commands());
-        *self.catalog.borrow_mut() = found;
+        *self.apps.borrow_mut() = found;
+        self.rebuild_catalog();
         self.scanning.set(false);
         self.set_busy(false);
         self.app_count.set(count);
@@ -421,7 +604,16 @@ impl App {
         } else if self.in_appearance.get() {
             self.appearance_lines(query, &config)
         } else {
-            search::lines(query, &self.catalog.borrow(), &self.usage.borrow(), &config.search, &mut self.matcher.borrow_mut())
+            let mut lines = if query.trim().is_empty() { self.update_lines() } else { Vec::new() };
+            lines.extend(search::lines(
+                query,
+                &self.catalog.borrow(),
+                &self.usage.borrow(),
+                &config.search,
+                &config.quicklink,
+                &mut self.matcher.borrow_mut(),
+            ));
+            lines
         };
         let compact = a.compact() && walkthrough.is_none();
         let details = a.details && !compact && walkthrough.is_none();
@@ -572,11 +764,11 @@ impl App {
             keys.iter().filter_map(|k| all.iter().find(|s| s.key == *k)).map(setting_item).map(Line::Item).collect()
         };
         match step {
-            0 => vec![Line::Hero("Tendril".into(), "A keyboard launcher. No web views, nothing sent anywhere.".into())],
+            0 => vec![Line::Hero("Tendril".into(), "A keyboard launcher. No web views, no tracking.".into())],
             1 => {
                 let mut lines = vec![Line::Section("Open Tendril with".into()), Line::Item(shortcut_item())];
-                lines.push(Line::Section("When you log in".into()));
-                lines.extend(settings(&["login"]));
+                lines.push(Line::Section("Starting and updating".into()));
+                lines.extend(settings(&["login", "updates"]));
                 lines
             }
             2 => std::iter::once(Line::Section("Look".into())).chain(settings(appearance::LOOK)).collect(),
@@ -719,6 +911,7 @@ impl App {
             return;
         }
         *self.config.borrow_mut() = config::load();
+        self.start_update_checks();
         self.apply_theme();
         self.apply_appearance();
         self.refresh_keeping(&ui.get_query(), Some(&format!("setting:{key}")));
@@ -844,7 +1037,10 @@ impl App {
             ui.set_confirm_open(true);
             return;
         }
-        if record && item.kind != Kind::Calculator && !matches!(item.run, Run::Setting(_) | Run::Shortcut) {
+        if record
+            && !matches!(item.kind, Kind::Calculator | Kind::File)
+            && !matches!(item.run, Run::Setting(_) | Run::Shortcut | Run::InstallUpdate | Run::RestartToUpdate | Run::Prefill(_))
+        {
             self.usage.borrow_mut().record(&item.id, &ui.get_query());
             self.usage_changed.set(true);
         }
@@ -871,6 +1067,40 @@ impl App {
                 Ok(Done::Stay)
             }
             Run::Shortcut => Ok(Done::Stay),
+            Run::Path(path, true) => {
+                // Into the folder: the field becomes its path, listing what's in it.
+                let next = crate::paths::into(path);
+                ui.set_query(next.as_str().into());
+                ui.invoke_caret_to_end();
+                self.refresh(&next);
+                Ok(Done::Stay)
+            }
+            Run::Path(path, false) => system::open(&path.to_string_lossy()).map_err(|e| e.to_string()).map(|_| Done::Hide),
+            Run::Prefill(text) => {
+                ui.set_query(text.as_str().into());
+                ui.invoke_caret_to_end();
+                self.refresh(text);
+                Ok(Done::Stay)
+            }
+            Run::CheckUpdates => {
+                self.check_updates_now();
+                Ok(Done::Stay)
+            }
+            Run::InstallUpdate => {
+                let release = match &*self.update.borrow() {
+                    UpdateState::Available(r) => Some(r.clone()),
+                    _ => None,
+                };
+                if let Some(release) = release {
+                    self.install_update(release, true);
+                }
+                Ok(Done::Stay)
+            }
+            Run::RestartToUpdate => {
+                RESTART.store(true, Ordering::SeqCst);
+                let _ = slint::quit_event_loop();
+                Ok(Done::Stay)
+            }
             Run::Setting(key) => {
                 self.change_setting(key, 1);
                 Ok(Done::Stay)

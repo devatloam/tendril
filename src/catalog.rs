@@ -22,6 +22,8 @@ pub enum Kind {
     Command,
     Calculator,
     Fallback,
+    File,
+    Link,
 }
 
 impl Kind {
@@ -29,7 +31,8 @@ impl Kind {
         match self {
             Kind::Application => "Application",
             Kind::Command => "Command",
-            Kind::Calculator | Kind::Fallback => "",
+            Kind::Link => "Quicklink",
+            Kind::Calculator | Kind::Fallback | Kind::File => "",
         }
     }
 }
@@ -52,6 +55,13 @@ pub enum Run {
     Shortcut,
     /// The first-run walkthrough, again.
     Onboarding,
+    CheckUpdates,
+    /// A file or folder: folders are gone into, files opened.
+    Path(std::path::PathBuf, bool),
+    /// Puts this in the search field, for a quicklink that wants text after its keyword.
+    Prefill(String),
+    InstallUpdate,
+    RestartToUpdate,
     Quit,
 }
 
@@ -96,6 +106,11 @@ impl Item {
             Run::Url(_) => "Open",
             Run::Setting(_) => "Change",
             Run::Shortcut => "Press New Keys",
+            Run::InstallUpdate => "Update",
+            Run::Path(_, true) => "Open Folder",
+            Run::Path(_, false) => "Open File",
+            Run::Prefill(_) => "Type Text",
+            Run::RestartToUpdate => "Restart",
             Run::Appearance => "Open",
             _ => "Run Command",
         }
@@ -112,6 +127,7 @@ pub fn commands() -> Vec<Item> {
         Item::command("settings", "Tendril Settings", "preferences config hotkey", "settings", 7, Run::Settings),
         Item::command("reload", "Reload Apps", "refresh rescan", "refresh", 7, Run::Reload),
         Item::command("appearance", "Appearance", "settings look theme blur glow compact details grid keys", "palette", 7, Run::Appearance),
+        Item::command("updates", "Check for Updates", "update upgrade new version", "download", 7, Run::CheckUpdates),
         Item::command("setup", "Set Up Tendril", "onboarding welcome walkthrough shortcut hotkey", "wave", 7, Run::Onboarding),
         Item::command("about", "About Tendril", "version info", "tendril", 7, Run::About),
         Item::command("quit", "Quit Tendril", "exit close", "quit", 7, Run::Quit),
@@ -129,4 +145,43 @@ pub fn commands() -> Vec<Item> {
         items.push(item);
     }
     items
+}
+
+/// Your quicklinks as things to find by name.
+pub fn quicklinks(links: &[crate::config::Quicklink]) -> Vec<Item> {
+    links
+        .iter()
+        .map(|link| {
+            let keyword = keyword_of(link);
+            let run = if link.takes_text() { Run::Prefill(format!("{keyword} ")) } else { link_target(&link.url) };
+            Item {
+                id: format!("link:{}", link.name),
+                title: link.name.clone(),
+                subtitle: if link.takes_text() { format!("{keyword} …") } else { link.url.clone() },
+                keywords: format!("{keyword} {}", link.url),
+                kind: Kind::Link,
+                icon: Icon::Builtin("link"),
+                tint: 7,
+                run,
+                path: None,
+            }
+        })
+        .collect()
+}
+
+/// A quicklink's keyword, or the first word of its name when it has none.
+pub fn keyword_of(link: &crate::config::Quicklink) -> String {
+    let k = link.keyword.trim();
+    if k.is_empty() { link.name.split_whitespace().next().unwrap_or("").to_lowercase() } else { k.to_lowercase() }
+}
+
+/// Where a filled-in link goes: a folder or file if it's a path, the browser otherwise.
+pub fn link_target(url: &str) -> Run {
+    if crate::paths::is_path(url) {
+        let path = crate::paths::expand(url);
+        let dir = path.is_dir();
+        Run::Path(path, dir)
+    } else {
+        Run::Url(url.to_string())
+    }
 }

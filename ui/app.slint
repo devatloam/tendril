@@ -130,6 +130,11 @@ export component Launcher inherits Window {
     public function focus-search() {
         search.focus();
     }
+    // After Tendril fills the field itself (going into a folder, a quicklink's keyword), so you
+    // carry on typing at the end.
+    public function caret-to-end() {
+        search.set-selection-offsets(root.query.character-count, root.query.character-count);
+    }
     public function focus-actions() {
         panel.focus-field();
     }
@@ -863,7 +868,7 @@ export component Launcher inherits Window {
                     }
 
                     Text {
-                        text: "A keyboard launcher. No web views, nothing sent anywhere.";
+                        text: "A keyboard launcher. No web views, no tracking.";
                         color: Theme.ink-2;
                         font-size: 13px;
                         horizontal-alignment: center;

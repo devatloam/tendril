@@ -5,8 +5,26 @@ By Loam, alongside [Blight](https://github.com/bluejutzu/blight).
 A keyboard launcher in the style of Raycast. Press Alt+Space, type a few letters, press Enter.
 
 It's a native program: Rust, with the UI drawn by [Slint](https://slint.dev) on the CPU. There's no browser engine
-inside it, no GPU context, no account, no AI and nothing sent anywhere. When the window is closed it's destroyed, so
-between uses Tendril holds a list of your apps and little else.
+inside it, no GPU context, no account, no AI and no tracking. The one request it makes is an update check to GitHub,
+which you can turn off. When the window is closed it's destroyed, so between uses Tendril holds a list of your apps and
+little else.
+
+## Installing
+
+Download the file for your system from [Releases](https://github.com/devatloam/tendril/releases):
+
+- **Linux** (x86_64): `tendril-<version>-linux-x86_64.tar.gz`. Unpack it and run `./install.sh`: it puts Tendril in
+  `~/.local/bin` with a menu entry, and needs no root.
+- **Windows** (x86_64): `tendril-<version>-windows-x86_64.zip`. Put `tendril.exe` somewhere of your own, like
+  `%LOCALAPPDATA%\Programs\Tendril`, and run it.
+- **macOS**: `tendril-<version>-macos-aarch64.zip` for Apple silicon, `-x86_64` for Intel. Move Tendril.app to
+  Applications. It isn't signed yet, so open it the first time with right-click → Open.
+
+The first run walks you through setting it up. After that Tendril keeps itself up to date: it checks GitHub every six
+hours while it runs, and on "Automatic" downloads the new version, checks it against the checksum the release lists,
+and puts it in place for the next start. "Check for Updates" asks now; Appearance → Updates switches it to "Tell me" or
+off. A copy you built yourself, or one in a folder Tendril can't write to, tells you about new versions but doesn't
+replace itself.
 
 ![Tendril, see-through over a busy desktop](docs/glass.png)
 
@@ -58,6 +76,12 @@ What you can find:
 - **System commands**: Lock Screen, Sleep, Log Out, Restart, Shut Down. The last three ask first.
 - **Web searches and links**: every query ends with "Search Google" and "Search DuckDuckGo" (add your own), and
   something that looks like a link, like `github.com/rust-lang`, can be opened directly.
+- **Files**: type a path, `~/`, `/` or `C:\`, and that folder is listed as you type. Enter goes into a folder or opens a
+  file, Ctrl Enter shows it in your file manager. Hidden files show once you type a dot. Nothing is indexed: the folder
+  is read while you're typing its path, and that's all.
+- **Quicklinks**: your own links in config.toml. Give one a keyword and `{query}`, and `gh devatloam/tendril` opens
+  that repository; leave the keyword out and it's a bookmark you search for by name. Folders work as well as web
+  addresses.
 - **Themes**: type "theme" for the palettes from Blight's dashboard (Ember, Midnight, Moss, Dusk, Black, Paper, Sepia,
   Mist). Picking one saves it.
 
@@ -122,6 +146,7 @@ theme = "system"              # or a palette by name
 dark_theme = "ember"
 light_theme = "paper"
 hide_on_blur = true
+updates = "auto"              # "notify", "off"
 
 [appearance]
 blur = true
@@ -136,6 +161,15 @@ quick_keys = false
 [[search]]
 name = "GitHub"
 url = "https://github.com/search?q={query}"
+
+[[quicklink]]
+name = "GitHub repository"
+keyword = "gh"
+url = "https://github.com/{raw}"     # {raw} as typed, {query} made safe for a URL
+
+[[quicklink]]
+name = "Projects"
+url = "~/Projects"
 ```
 
 ## Building
@@ -184,10 +218,15 @@ src/
   icons.rs       loading icons on demand, scaled to 64px
   hotkey.rs      the global key (an X11 grab on Linux; global-hotkey elsewhere)
   ipc.rs         the socket behind `tendril toggle`
+  update.rs      checking GitHub for a new version, and putting it in place
+  paths.rs       listing a folder as you type its path
   usage.rs       what you open, for ranking
   config.rs      config.toml
   palettes.rs    Blight's palettes
 fonts/           Geist (SIL Open Font License)
+assets/          Tendril's app icon, as SVG, PNG, ICO and ICNS
+packaging/       what goes into a release besides the binary: the Linux menu entry and installer, the macOS Info.plist
+.github/         check.yml on every push; release.yml on a version tag
 ```
 
 Things that keep it light, if you're changing it:

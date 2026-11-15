@@ -2,7 +2,7 @@
 
 use crate::calc;
 use crate::catalog::{Icon, Item, Kind, Run};
-use crate::config::Engine;
+use crate::config::{Engine, Quicklink};
 use crate::usage::Usage;
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Matcher, Utf32Str};
@@ -21,12 +21,42 @@ pub enum Line {
 const MAX_RESULTS: usize = 40;
 const SUGGESTIONS: usize = 6;
 
-pub fn lines(query: &str, catalog: &[Item], usage: &Usage, engines: &[Engine], matcher: &mut Matcher) -> Vec<Line> {
+pub fn lines(query: &str, catalog: &[Item], usage: &Usage, engines: &[Engine], links: &[Quicklink], matcher: &mut Matcher) -> Vec<Line> {
+    if crate::paths::is_path(query) {
+        let found = crate::paths::entries(query);
+        if found.is_empty() {
+            return vec![Line::Empty("Nothing there matches".into())];
+        }
+        return std::iter::once(Line::Section("Files".into())).chain(found.into_iter().map(Line::Item)).collect();
+    }
     let query = query.trim();
     if query.is_empty() {
         return root(catalog, usage);
     }
     let mut lines = Vec::new();
+    let mut keyword_used = false;
+
+    // A quicklink's keyword and some text: that link, filled in, first.
+    if let Some((word, rest)) = query.split_once(' ')
+        && !rest.trim().is_empty()
+        && let Some(link) = links.iter().find(|l| l.takes_text() && crate::catalog::keyword_of(l) == word.to_lowercase())
+    {
+        let rest = rest.trim();
+        let filled = fill(&link.url, rest);
+        keyword_used = true;
+        lines.push(Line::Section("Quicklink".into()));
+        lines.push(Line::Item(Item {
+            id: format!("link:{}", link.name),
+            title: format!("{}: {}", link.name, shorten(rest, 50)),
+            subtitle: shorten(&filled, 60),
+            keywords: String::new(),
+            kind: Kind::Link,
+            icon: Icon::Builtin("link"),
+            tint: 2,
+            run: crate::catalog::link_target(&filled),
+            path: None,
+        }));
+    }
 
     if let Some(answer) = calc::evaluate(query) {
         lines.push(Line::Section("Calculator".into()));
@@ -60,7 +90,18 @@ pub fn lines(query: &str, catalog: &[Item], usage: &Usage, engines: &[Engine], m
         let title = format!("Search {}", engine.name);
         lines.push(Line::Item(fallback(&engine.name, &title, query, "globe", 2, url)));
     }
+    for link in links.iter().filter(|l| l.takes_text() && !keyword_used) {
+        let target = crate::catalog::link_target(&fill(&link.url, query));
+        let mut item = fallback(&link.name, &format!("Open {}", link.name), query, "link", 2, String::new());
+        item.run = target;
+        lines.push(Line::Item(item));
+    }
     lines
+}
+
+/// A quicklink's address with the text put in: {query} made safe for a URL, {raw} as typed.
+fn fill(url: &str, text: &str) -> String {
+    url.replace("{query}", &encode(text)).replace("{raw}", text)
 }
 
 /// The list before you type: what you use most, then every command.
@@ -180,7 +221,7 @@ mod tests {
     fn titles(query: &str, usage: &Usage) -> Vec<String> {
         let catalog = commands();
         let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
-        lines(query, &catalog, usage, &[], &mut matcher)
+        lines(query, &catalog, usage, &[], &[], &mut matcher)
             .into_iter()
             .filter_map(|l| match l {
                 Line::Item(i) if i.kind == Kind::Command => Some(i.title),
@@ -220,14 +261,27 @@ mod tests {
     fn says_when_nothing_matches() {
         let catalog = commands();
         let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
-        let lines = lines("zzqx", &catalog, &Usage::default(), &[], &mut matcher);
+        let lines = lines("zzqx", &catalog, &Usage::default(), &[], &[], &mut matcher);
         assert!(matches!(lines.first(), Some(Line::Empty(m)) if m.contains("zzqx")));
         let lines = lines_for_sum(&catalog, &mut matcher);
         assert!(!lines.iter().any(|l| matches!(l, Line::Empty(_))), "a sum isn't 'nothing found'");
     }
 
     fn lines_for_sum(catalog: &[Item], matcher: &mut Matcher) -> Vec<Line> {
-        lines("2+2", catalog, &Usage::default(), &[], matcher)
+        lines("2+2", catalog, &Usage::default(), &[], &[], matcher)
+    }
+
+    #[test]
+    fn quicklinks_take_text() {
+        let links = vec![crate::config::Quicklink { name: "GitHub".into(), keyword: "gh".into(), url: "https://github.com/{raw}".into() }];
+        let catalog = commands();
+        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
+        let found = lines("gh devatloam/tendril", &catalog, &Usage::default(), &[], &links, &mut matcher);
+        match &found[1] {
+            Line::Item(item) => assert!(matches!(&item.run, Run::Url(u) if u == "https://github.com/devatloam/tendril")),
+            _ => panic!("the quicklink comes first"),
+        }
+        assert_eq!(fill("https://x.test/?q={query}", "a b"), "https://x.test/?q=a+b");
     }
 
     #[test]

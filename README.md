@@ -1,13 +1,48 @@
-# Tendril
+<p align="center">
+  <img src="assets/tendril.svg" width="88" height="88" alt="Tendril's mark" />
+</p>
 
-By Loam, alongside [Blight](https://github.com/bluejutzu/blight).
+<h1 align="center">Tendril</h1>
 
-A keyboard launcher in the style of Raycast. Press Alt+Space, type a few letters, press Enter.
+<p align="center">A keyboard launcher for Windows, Linux and macOS. Native, light, and quiet.</p>
 
-It's a native program: Rust, with the UI drawn by [Slint](https://slint.dev) on the CPU. There's no browser engine
-inside it, no GPU context (unless you ask for one), no account, no AI and no tracking. What it sends: an update check to
-GitHub, and, once per site, a request for the icon of each website you've made a quicklink to. Both can be turned off. When the window is closed it's destroyed, so between uses Tendril holds a list of your apps and
-little else.
+<p align="center">
+  <a href="https://github.com/devatloam/tendril/releases/latest"><strong>Download</strong></a> ·
+  <a href="#installing">Install</a> ·
+  <a href="#what-you-can-find">What it finds</a> ·
+  <a href="#keys">Keys</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#building">Building</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/devatloam/tendril/releases/latest"><img src="https://img.shields.io/github/v/release/devatloam/tendril?label=release&color=4a78d0" alt="Latest release" /></a>
+  <a href="https://github.com/devatloam/tendril/releases"><img src="https://img.shields.io/github/v/release/devatloam/tendril?include_prereleases&label=nightly&color=7a6fbf" alt="Latest nightly" /></a>
+  <a href="https://github.com/devatloam/tendril/actions/workflows/check.yml"><img src="https://github.com/devatloam/tendril/actions/workflows/check.yml/badge.svg" alt="Checks" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-GPL--3.0-5a9e6f" alt="GPL-3.0" /></a>
+</p>
+
+<p align="center">
+  <img src="docs/hero.webp" width="100%" alt="Tendril open over a desktop, see-through, with favourite apps as tiles above its commands" />
+</p>
+
+Press Alt+Space, type a few letters, press Enter. Tendril opens your apps, files and folders, does sums, searches the
+web, pastes from your clipboard history and brings windows forward, all from one field. It's in the style of Raycast,
+made by Loam alongside [Blight](https://github.com/bluejutzu/blight).
+
+## What you get
+
+- **Light.** About 18 MB of memory, open in a few milliseconds, and nothing running while it's closed. Rust, drawn by
+  [Slint](https://slint.dev) on the CPU: no browser engine inside it, and no GPU unless you ask for one.
+- **Yours.** No account, no AI, no tracking. It asks GitHub for updates and each quicklink's site for its icon, and
+  both can be turned off.
+- **One field for everything.** Apps, files, sums, web searches, quicklinks, system commands, Windows Settings pages,
+  clipboard history and open windows.
+- **Your icons, in their colours.** Apps, files and sites keep their own icons; Tendril draws only its own commands.
+- **The keyboard all the way.** Ctrl K lists what you can do with anything; quick keys open the first nine rows.
+- **Made to look at.** See-through with blur, eight palettes from Blight, Flat or Modern, compact or with details.
+- **A Settings window**, and the same settings in the launcher itself for when your hands are on the keys.
+- **Keeps itself up to date**, checked against the release's checksum, with nightly previews if you want them early.
 
 ## Installing
 
@@ -43,15 +78,17 @@ release it leads up to, so once 0.2.1 itself is out you move on to it. Appearanc
 Always or Never ("Don't Offer Previews" in the row's actions does the same as Never). Only the ten newest nightlies are
 kept, about ten days' worth.
 
-![Tendril, see-through over a busy desktop](docs/glass.png)
+## Screenshots
 
-| Favourites and commands            | Details beside the list                    | Actions (Ctrl K)                       |
-| ---------------------------------- | ------------------------------------------ | -------------------------------------- |
-| ![Favourites](docs/home.png)       | ![Details](docs/details.png)               | ![Actions](docs/actions.png)           |
-| **Appearance**                     | **Compact, with quick keys**               | **The calculator**                     |
-| ![Appearance](docs/appearance.png) | ![Compact](docs/compact.png)               | ![The calculator](docs/calculator.png) |
-| **First run**                      | **Recording your shortcut**                | **Before logging out or similar**      |
-| ![Welcome](docs/welcome.png)       | ![Shortcut](docs/shortcut.png)             | ![Confirming](docs/confirm.png)        |
+| Details beside the list | Actions (Ctrl K) | Sums, typed straight in |
+| --- | --- | --- |
+| ![Inkscape selected, its details beside the list](docs/details.webp) | ![The actions for GIMP](docs/actions.webp) | ![2^10 * 3 + 7 = 3,079](docs/calculator.webp) |
+| **Clipboard history** | **Files and folders** | **Quicklinks** |
+| ![What you've copied, newest first](docs/clipboard.webp) | ![The home folder, listed as you type ~/](docs/files.webp) | ![gh devatloam/tendril opens that repository](docs/quicklink.webp) |
+| **Settings** | **Settings: Appearance** | **Appearance, from the launcher** |
+| ![The Settings window's General tab](docs/settings.webp) | ![The Settings window's Appearance tab](docs/settings-appearance.webp) | ![The Appearance view in the launcher](docs/appearance.webp) |
+| **Compact, with quick keys** | **Paper, a light palette** | **The first run** |
+| ![Compact size with quick keys](docs/compact.webp) | ![The Paper palette](docs/light.webp) | ![Welcome to Tendril](docs/welcome.webp) |
 
 ## What it costs
 
@@ -67,9 +104,10 @@ A real desktop with hundreds of apps will use a little more for the list and the
 | Binary | 17 MB, fonts and icons included |
 | Blur on Windows, macOS or Wayland | Needs the GPU renderer. Under Mesa's software OpenGL that was about 60 MB more heap, kept while Tendril runs; real drivers differ. That's why blur starts off there, and on under X11, where it costs nothing |
 
-Windows and macOS haven't been measured yet (see [Status](#status)).
+On Windows, a GitHub runner measures it on every change: about 18 MB private memory, open or closed, and the shortcut
+opens it in 2 to 3 ms (the window is kept there, hidden, rather than made afresh).
 
-## Using it
+## Keys
 
 | Keys | |
 | --- | --- |
@@ -81,11 +119,11 @@ Windows and macOS haven't been measured yet (see [Status](#status)).
 | Ctrl Enter | The second action: show the app in your file manager, copy a link |
 | Ctrl K | All actions for the selected item, with their own search |
 | Esc | Clear what you typed, then close |
-| Ctrl , | Open config.toml |
+| Ctrl , | Open Settings |
 
 On macOS, Ctrl is ⌘ throughout.
 
-What you can find:
+## What you can find
 
 - **Apps**, the way your system lists them: `.desktop` files on Linux (Flatpak and Snap included), everything in Start
   on Windows (Store apps too), the Applications folders on macOS. Icons come from the system.
@@ -184,7 +222,7 @@ about a second.
   `blur-background`; without a compositor the window is just translucent.
 - **Linux, Wayland**: Hyprland, and Sway with SwayFX, blur see-through windows by their own settings; GNOME doesn't.
 
-## Settings
+## config.toml
 
 `config.toml` lives in `~/.config/tendril/` on Linux, `%APPDATA%\tendril\` on Windows and
 `~/Library/Application Support/tendril/` on macOS. It's written with comments the first time Tendril starts, and read again
@@ -290,7 +328,7 @@ src/
   catalog.rs     the item model, and Tendril's own commands
   apps/          finding and launching apps: linux.rs, windows.rs, macos.rs
   calc.rs        the arithmetic parser
-  icons.rs       loading icons on demand, scaled to 64px
+  icons.rs       loading icons on their own thread, scaled to the exact pixels they're shown at
   hotkey.rs      the global key (an X11 grab on Linux; global-hotkey elsewhere)
   ipc.rs         the socket behind `tendril toggle`
   update.rs      checking GitHub for a new version or preview, and putting it in place
@@ -301,6 +339,7 @@ src/
   sites.rs       fetching and keeping quicklinks' site icons
   settings.rs    the Settings window (ui/settings.slint)
   tray.rs        the notification area icon on Windows
+  window.rs      also frames the Settings window: its own title bar on Windows and Linux
   usage.rs       what you open, for ranking
   config.rs      config.toml
   palettes.rs    Blight's palettes
@@ -319,20 +358,20 @@ Things that keep it light, if you're changing it:
 - **Animations exist only while they're on screen.** The shapes, the glow and the loading line are each put on screen
   with an `if` and read `animation-tick()`, which stops once they're gone. Slint's CPU renderer can't rotate an
   element, so the shapes are paths whose corners `motion.slint` turns itself.
-- **Icons load when a row first shows them**, and anything bigger than 64px is scaled down before it's kept.
+- **Icons load on their own thread**, scaled there to the exact pixels they're shown at, and arrive in the rows when
+  they're ready, so typing never waits for them.
 - **Apps are found on a background thread** at start and when the window opens, at most every two minutes.
 
 ## Status
 
-Built and used on Linux under X11, with blur checked under picom. The Windows and macOS code compiles and passes clippy
-for both targets, but hasn't been run on either system yet, so expect rough edges there: the blur types (Acrylic, Mica,
-the macOS materials), open at login, window placement on more than one screen, focus returning to the previous app on
-macOS, and app icons on macOS (read from `.icns` files, which some newer apps no longer ship).
+Used daily on Linux under X11, with blur checked under picom. Windows runs through a smoke test on a GitHub Windows
+runner after every change to the code (`.github/workflows/smoke.yml`): starting, the shortcut, recording a new one,
+typing fast, clicking away, starting it again, the Settings window, and installing with the setup. macOS compiles and
+passes clippy, but hasn't been run on a Mac yet, so expect rough edges there: the blur materials, open at login, and app
+icons read from `.icns` files.
 
-Clipboard history and Switch Windows have been tried under X11 (with Openbox) only; their Windows code compiles and
-passes clippy but hasn't run yet. Website icons couldn't be tried against real sites from where this was built.
-
-Not done yet: file search, snippets, extensions, a tray icon, switching windows on macOS.
+Switch Windows works on X11 and Windows. Not done yet: file search beyond typing a path, snippets, extensions, a tray
+icon on Linux and macOS, switching windows on macOS.
 
 ## Licence
 

@@ -61,7 +61,9 @@ mod imp {
             };
             let tip: Vec<u16> = "Tendril".encode_utf16().collect();
             data.szTip[..tip.len()].copy_from_slice(&tip);
-            if !Shell_NotifyIconW(NIM_ADD, &data).as_bool() {
+            let added = Shell_NotifyIconW(NIM_ADD, &data).as_bool();
+            eprintln!("tendril: notification area icon {}", if added { "added" } else { "refused" });
+            if !added {
                 return;
             }
             let mut msg = MSG::default();

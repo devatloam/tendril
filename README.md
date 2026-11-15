@@ -1,6 +1,6 @@
 # Tendril
 
-By [Loam](https://github.com/loam), alongside [Blight](https://github.com/bluejutzu/blight).
+By Loam, alongside [Blight](https://github.com/bluejutzu/blight).
 
 A keyboard launcher in the style of Raycast. Press Alt+Space, type a few letters, press Enter.
 

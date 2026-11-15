@@ -113,6 +113,9 @@ There's no window manager, so give the window keyboard focus yourself (python-xl
      permission was given), so do 2 with the GitHub tools: push the bump commit to main, then `actions_run_trigger`
      with `run_workflow`, `workflow_id: release.yml`, `ref: main` and `inputs: {"version": "X.Y.Z"}`. Don't retry the
      tag push.
+  When workflow files changed since the last release, 2 and 3 fail at publishing (HTTP 403, "Resource not accessible
+  by integration"): GitHub won't let the workflow's own token make a tag on a commit that changes workflows. Then the
+  tag has to come from someone's machine (1): `git tag vX.Y.Z <bump commit> && git push origin vX.Y.Z`.
 - Nightlies come from `.github/workflows/nightly.yml`, once a night (03:17 UTC) or by "Run workflow": the newest commit
   on main that passed `check.yml`, skipped when it's already in a nightly or release, published as a prerelease
   `vX.Y.Z-nightly.<date>.<run>` where X.Y.Z is the next patch after the last release. CI passes the version in

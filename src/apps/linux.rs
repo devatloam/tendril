@@ -150,7 +150,7 @@ fn item(id: &str, path: &Path, entry: &HashMap<String, String>, lang: &Lang, des
 }
 
 /// Splits an Exec line into arguments, as the desktop entry spec says, dropping the
-/// %f/%u style codes since Flint never passes files.
+/// %f/%u style codes since Tendril never passes files.
 fn exec_argv(exec: &str, icon: &str, name: &str, path: &Path) -> Vec<String> {
     let mut args = Vec::new();
     let mut current = String::new();

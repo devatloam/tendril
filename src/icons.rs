@@ -10,9 +10,9 @@ const SIZE: u32 = 64;
 /// The neutral tint, used when an app has no icon of its own and gets the generic one.
 const FALLBACK_TINT: i32 = 7;
 
-/// Flint's own icons (scripts/icons.py draws them): name, outline, and solid for the selected row.
+/// Tendril's own icons (scripts/icons.py draws them): name, outline, and solid for the selected row.
 const BUILTIN: &[(&str, &[u8], &[u8])] = &[
-    ("bolt", include_bytes!("../ui/icons/bolt.svg"), include_bytes!("../ui/icons/bolt-solid.svg")),
+    ("tendril", include_bytes!("../ui/icons/tendril.svg"), include_bytes!("../ui/icons/tendril-solid.svg")),
     ("app", include_bytes!("../ui/icons/app.svg"), include_bytes!("../ui/icons/app-solid.svg")),
     ("lock", include_bytes!("../ui/icons/lock.svg"), include_bytes!("../ui/icons/lock-solid.svg")),
     ("moon", include_bytes!("../ui/icons/moon.svg"), include_bytes!("../ui/icons/moon-solid.svg")),

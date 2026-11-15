@@ -127,7 +127,11 @@ pub fn settings(config: &Config) -> Vec<Setting> {
 
 /// What blur costs here, said where it's turned on.
 fn blur_about() -> &'static str {
-    if crate::window::needs_gpu_for_blur() { "See through, softened; uses the GPU and more memory" } else { "See through the window, softened" }
+    if crate::window::needs_gpu_for_blur() {
+        "See through, softened; uses the GPU and more memory"
+    } else {
+        "See through the window, softened"
+    }
 }
 
 /// The kinds of see-through this system offers, and what to say about them. Linux has none to

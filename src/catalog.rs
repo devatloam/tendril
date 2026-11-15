@@ -1,4 +1,4 @@
-//! Everything you can search for: installed apps, and Flint's own commands.
+//! Everything you can search for: installed apps, and Tendril's own commands.
 
 use crate::system::Power;
 use std::path::PathBuf;
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 pub enum Icon {
     #[cfg_attr(windows, allow(dead_code))]
     None,
-    /// One of Flint's own glyphs (icons.rs), drawn on a tinted square.
+    /// One of Tendril's own glyphs (icons.rs), drawn on a tinted square.
     Builtin(&'static str),
     #[cfg_attr(windows, allow(dead_code))]
     File(PathBuf),
@@ -48,7 +48,7 @@ pub enum Run {
     Appearance,
     /// One setting in the Appearance view, by its config key.
     Setting(&'static str),
-    /// The row that records the shortcut that opens Flint.
+    /// The row that records the shortcut that opens Tendril.
     Shortcut,
     /// The first-run walkthrough, again.
     Onboarding,
@@ -109,12 +109,12 @@ pub fn commands() -> Vec<Item> {
         Item::command("logout", "Log Out", "sign out logoff", "logout", 7, Run::Power(Power::LogOut)),
         Item::command("restart", "Restart", "reboot", "restart", 7, Run::Power(Power::Restart)),
         Item::command("shutdown", "Shut Down", "power off poweroff turn off", "power", 4, Run::Power(Power::ShutDown)),
-        Item::command("settings", "Flint Settings", "preferences config hotkey", "settings", 7, Run::Settings),
+        Item::command("settings", "Tendril Settings", "preferences config hotkey", "settings", 7, Run::Settings),
         Item::command("reload", "Reload Apps", "refresh rescan", "refresh", 7, Run::Reload),
         Item::command("appearance", "Appearance", "settings look theme blur glow compact details grid keys", "palette", 7, Run::Appearance),
-        Item::command("setup", "Set Up Flint", "onboarding welcome walkthrough shortcut hotkey", "wave", 7, Run::Onboarding),
-        Item::command("about", "About Flint", "version info", "bolt", 7, Run::About),
-        Item::command("quit", "Quit Flint", "exit close", "quit", 7, Run::Quit),
+        Item::command("setup", "Set Up Tendril", "onboarding welcome walkthrough shortcut hotkey", "wave", 7, Run::Onboarding),
+        Item::command("about", "About Tendril", "version info", "tendril", 7, Run::About),
+        Item::command("quit", "Quit Tendril", "exit close", "quit", 7, Run::Quit),
     ];
     for p in crate::palettes::PALETTES {
         let mut item = Item::command(

@@ -1,5 +1,5 @@
 //! config.toml: what you can change, read again each time the window opens. The Appearance
-//! view in Flint writes the same file, one line at a time, leaving your comments alone.
+//! view in Tendril writes the same file, one line at a time, leaving your comments alone.
 
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -113,11 +113,11 @@ impl Default for Config {
     }
 }
 
-const TEMPLATE: &str = r#"# Flint's settings. Saved changes apply the next time the window opens.
-# Most of these can also be changed from Flint itself: search for "Appearance".
+const TEMPLATE: &str = r#"# Tendril's settings. Saved changes apply the next time the window opens.
+# Most of these can also be changed from Tendril itself: search for "Appearance".
 
-# The keys that open Flint from anywhere, like "Alt+Space", "Ctrl+Shift+Space" or "Super+KeyF".
-# On Wayland, bind `flint toggle` in your compositor instead: global keys are an X11, Windows and macOS thing.
+# The keys that open Tendril from anywhere, like "Alt+Space", "Ctrl+Shift+Space" or "Super+KeyF".
+# On Wayland, bind `tendril toggle` in your compositor instead: global keys are an X11, Windows and macOS thing.
 hotkey = "Alt+Space"
 
 # "system" follows your light or dark setting, with the two palettes below.
@@ -129,13 +129,13 @@ light_theme = "paper"
 # Close when you click somewhere else.
 hide_on_blur = true
 
-# Set once you've been through the first-run walkthrough ("Set Up Flint" runs it again).
+# Set once you've been through the first-run walkthrough ("Set Up Tendril" runs it again).
 onboarded = false
 
 [appearance]
 # See through the window, with what's behind it blurred. On Linux under X11 this costs nothing
-# extra and is on to start with; on Windows, macOS and Wayland it switches Flint to drawing with
-# the GPU, which keeps tens of megabytes more while Flint runs, so it starts off there. Blur itself comes from the system: Windows'
+# extra and is on to start with; on Windows, macOS and Wayland it switches Tendril to drawing with
+# the GPU, which keeps tens of megabytes more while Tendril runs, so it starts off there. Blur itself comes from the system: Windows'
 # acrylic, macOS' vibrancy, KDE, or your compositor's blur setting (Hyprland, picom, …).
 blur = true
 # The kind of see-through, where the system has more than one. Windows: "acrylic" (blurs what's
@@ -177,7 +177,7 @@ fn template() -> String {
 }
 
 pub fn path() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(std::env::temp_dir).join("flint").join("config.toml")
+    dirs::config_dir().unwrap_or_else(std::env::temp_dir).join("tendril").join("config.toml")
 }
 
 /// Reads config.toml, writing the commented default the first time. A file that doesn't parse
@@ -186,7 +186,7 @@ pub fn load() -> Config {
     let path = path();
     match std::fs::read_to_string(&path) {
         Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("flint: {} has a mistake, using the defaults: {e}", path.display());
+            eprintln!("tendril: {} has a mistake, using the defaults: {e}", path.display());
             Config::default()
         }),
         Err(_) => {

@@ -34,7 +34,7 @@ pub fn spawn(program: &str, args: &[&str]) -> io::Result<()> {
     Ok(())
 }
 
-/// Lets a launched app outlive Flint and its keyboard shortcuts.
+/// Lets a launched app outlive Tendril and its keyboard shortcuts.
 pub fn detach(command: &mut Command) {
     #[cfg(unix)]
     {
@@ -144,7 +144,7 @@ pub fn reveal(path: &Path) -> io::Result<()> {
 
 thread_local! {
     // On X11 and Wayland what's copied lives in the app that copied it, so the clipboard is kept
-    // for as long as Flint runs. It's made the first time something is copied, not at start.
+    // for as long as Tendril runs. It's made the first time something is copied, not at start.
     static CLIPBOARD: std::cell::RefCell<Option<arboard::Clipboard>> = const { std::cell::RefCell::new(None) };
 }
 

@@ -23,7 +23,7 @@ component Highlight inherits Rectangle {
 }
 
 export component Launcher inherits Window {
-    title: "Flint";
+    title: "Tendril";
     // Compact: narrower, and only as tall as what it lists.
     width: compact ? 620px : 750px;
     height: compact ? min(474px, 57px + max(rows-height + 14px, 60px)) : 474px;
@@ -38,7 +38,7 @@ export component Launcher inherits Window {
     // See-through: the system blurs what's behind; the panel is drawn at `opacity`.
     in property <bool> see-through;
     in property <float> panel-opacity: 0.78;
-    // Where the system rounds the window itself (Windows 11, macOS), Flint doesn't.
+    // Where the system rounds the window itself (Windows 11, macOS), Tendril doesn't.
     in property <length> corner: 12px;
     // 0 off, 1 still, 2 drifting.
     in property <int> glow-mode: 1;
@@ -60,7 +60,7 @@ export component Launcher inherits Window {
     // ---- The bar along the bottom. ----
     in property <image> context-icon;
     in property <int> context-tint;
-    in property <string> context-title: "Flint";
+    in property <string> context-title: "Tendril";
     in property <string> primary-label;
     in property <string> mod-key: "Ctrl";
     in property <string> toast;
@@ -97,7 +97,7 @@ export component Launcher inherits Window {
     in property <int> steps: 5;
     in property <string> step-title;
     in property <string> step-body;
-    // The shortcut that opens Flint, as keycaps, and what to say under it.
+    // The shortcut that opens Tendril, as keycaps, and what to say under it.
     in property <[string]> shortcut-keys;
     in property <string> shortcut-note;
     in property <bool> shortcut-ok: true;
@@ -443,7 +443,7 @@ export component Launcher inherits Window {
                                         }
                                     }
                                 }
-                                // The shortcut that opens Flint, shown as its keys.
+                                // The shortcut that opens Tendril, shown as its keys.
                                 if row.kind == 6: HorizontalLayout {
                                     padding-left: 12px;
                                     padding-right: 14px;
@@ -687,7 +687,7 @@ export component Launcher inherits Window {
                         padding-right: 10px;
                         spacing: 8px;
                         // What sits left of the words: the shapes hopping when something worked,
-                        // tossing while Flint works, otherwise an icon.
+                        // tossing while Tendril works, otherwise an icon.
                         Rectangle {
                             width: 26px;
                             if root.toast != "" && !root.toast-failed: Tumble {
@@ -830,7 +830,8 @@ export component Launcher inherits Window {
             }
 
             if root.about-open: Rectangle {
-                background: see-through ? Theme.panel.with-alpha(root.panel-opacity) : Theme.panel;
+                // Solid enough that the list doesn't show through, even while blurred.
+                background: see-through ? Theme.panel.with-alpha(0.985) : Theme.panel;
                 TouchArea {
                     clicked => {
                         root.close-about();
@@ -854,7 +855,7 @@ export component Launcher inherits Window {
                     }
 
                     Text {
-                        text: "Flint";
+                        text: "Tendril";
                         color: Theme.ink;
                         font-size: 24px;
                         font-weight: 600;
@@ -870,6 +871,13 @@ export component Launcher inherits Window {
 
                     Text {
                         text: root.about-detail;
+                        color: Theme.ink-3;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Made by Loam, alongside Blight";
                         color: Theme.ink-3;
                         font-size: 12px;
                         horizontal-alignment: center;

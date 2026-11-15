@@ -1389,26 +1389,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flint"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "dirs",
- "global-hotkey",
- "icns",
- "image",
- "nucleo-matcher",
- "plist",
- "serde",
- "slint",
- "slint-build",
- "toml 0.9.12+spec-1.1.0",
- "window-vibrancy",
- "windows",
- "x11rb",
-]
-
-[[package]]
 name = "float-cmp"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4858,6 +4838,26 @@ dependencies = [
  "once_cell",
  "rustix 1.1.6",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tendril"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "dirs",
+ "global-hotkey",
+ "icns",
+ "image",
+ "nucleo-matcher",
+ "plist",
+ "serde",
+ "slint",
+ "slint-build",
+ "toml 0.9.12+spec-1.1.0",
+ "window-vibrancy",
+ "windows",
+ "x11rb",
 ]
 
 [[package]]

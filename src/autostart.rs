@@ -1,4 +1,4 @@
-//! Open at login: Flint starts hidden when you log in, each system's own way.
+//! Open at login: Tendril starts hidden when you log in, each system's own way.
 //!   Linux:   a .desktop file in ~/.config/autostart
 //!   Windows: a value under HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 //!   macOS:   a launch agent in ~/Library/LaunchAgents
@@ -11,7 +11,7 @@ fn command() -> io::Result<String> {
 
 #[cfg(target_os = "linux")]
 fn file() -> Option<std::path::PathBuf> {
-    Some(dirs::config_dir()?.join("autostart").join("flint.desktop"))
+    Some(dirs::config_dir()?.join("autostart").join("tendril.desktop"))
 }
 
 #[cfg(target_os = "linux")]
@@ -32,7 +32,7 @@ pub fn set(on: bool) -> io::Result<()> {
     std::fs::write(
         file,
         format!(
-            "[Desktop Entry]\nType=Application\nName=Flint\nComment=A keyboard launcher\nExec=\"{exe}\" --hidden\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n"
+            "[Desktop Entry]\nType=Application\nName=Tendril\nComment=A keyboard launcher\nExec=\"{exe}\" --hidden\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n"
         ),
     )
 }
@@ -43,7 +43,7 @@ mod registry {
     use windows::core::w;
 
     const RUN: windows::core::PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-    const NAME: windows::core::PCWSTR = w!("Flint");
+    const NAME: windows::core::PCWSTR = w!("Tendril");
 
     pub fn enabled() -> bool {
         unsafe { RegGetValueW(HKEY_CURRENT_USER, RUN, NAME, RRF_RT_REG_SZ, None, None, None).is_ok() }
@@ -69,7 +69,7 @@ pub use registry::{enabled, set};
 
 #[cfg(target_os = "macos")]
 fn file() -> Option<std::path::PathBuf> {
-    Some(dirs::home_dir()?.join("Library/LaunchAgents/dev.flint.launcher.plist"))
+    Some(dirs::home_dir()?.join("Library/LaunchAgents/dev.loam.tendril.plist"))
 }
 
 #[cfg(target_os = "macos")]
@@ -94,7 +94,7 @@ pub fn set(on: bool) -> io::Result<()> {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>dev.flint.launcher</string>
+  <key>Label</key><string>dev.loam.tendril</string>
   <key>ProgramArguments</key><array><string>{exe}</string><string>--hidden</string></array>
   <key>RunAtLoad</key><true/>
 </dict>

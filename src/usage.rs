@@ -34,7 +34,7 @@ pub fn now() -> u64 {
 }
 
 fn path() -> PathBuf {
-    dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("flint").join("usage.toml")
+    dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("tendril").join("usage.toml")
 }
 
 impl Usage {
@@ -89,7 +89,7 @@ impl Usage {
         u.count as f64 * weight
     }
 
-    /// How many times, and when last (seconds since 1970), something was opened from Flint.
+    /// How many times, and when last (seconds since 1970), something was opened from Tendril.
     pub fn stats(&self, id: &str) -> Option<(u32, u64)> {
         self.items.get(id).map(|u| (u.count, u.last))
     }

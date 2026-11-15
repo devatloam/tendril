@@ -23,16 +23,16 @@ use app::{App, with_app};
 use std::process::ExitCode;
 
 const HELP: &str = "\
-flint: a keyboard launcher
+tendril: a keyboard launcher
 
-  flint               start, or open the one that's running
-  flint --hidden      start without opening the window (for login items)
-  flint --appearance  start, or open the running one, on the Appearance settings
-  flint toggle        open or close the running Flint; bind this on Wayland
-  flint show | hide
-  flint --version
+  tendril               start, or open the one that's running
+  tendril --hidden      start without opening the window (for login items)
+  tendril --appearance  start, or open the running one, on the Appearance settings
+  tendril toggle        open or close the running Tendril; bind this on Wayland
+  tendril show | hide
+  tendril --version
 
-Settings live in config.toml; \"Flint Settings\" opens it.
+Settings live in config.toml; \"Tendril Settings\" opens it.
 ";
 
 fn main() -> ExitCode {
@@ -48,14 +48,14 @@ fn main() -> ExitCode {
                 return match ipc::send(&arg) {
                     Ok(()) => ExitCode::SUCCESS,
                     Err(e) => {
-                        eprintln!("flint: couldn't reach a running Flint ({e})");
+                        eprintln!("tendril: couldn't reach a running Tendril ({e})");
                         ExitCode::FAILURE
                     }
                 };
             }
             "--hidden" | "--background" => start_hidden = true,
             "-V" | "--version" => {
-                println!("flint {}", env!("CARGO_PKG_VERSION"));
+                println!("tendril {}", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
             }
             "-h" | "--help" => {
@@ -63,7 +63,7 @@ fn main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             other => {
-                eprintln!("flint: unknown argument {other}\n\n{HELP}");
+                eprintln!("tendril: unknown argument {other}\n\n{HELP}");
                 return ExitCode::from(2);
             }
         }
@@ -80,7 +80,7 @@ fn main() -> ExitCode {
 
     match run(start_hidden, appearance) {
         Ok(()) if app::RESTART.load(std::sync::atomic::Ordering::SeqCst) => {
-            // Everything above has been dropped; start the next Flint and leave.
+            // Everything above has been dropped; start the next Tendril and leave.
             let me = std::env::current_exe().ok();
             let args: &[&str] = if app::RESTART_TO_APPEARANCE.load(std::sync::atomic::Ordering::SeqCst) {
                 &["--restarted", "--appearance"]
@@ -90,14 +90,14 @@ fn main() -> ExitCode {
             match me.map(|me| std::process::Command::new(me).args(args).spawn()) {
                 Some(Ok(_)) => ExitCode::SUCCESS,
                 _ => {
-                    eprintln!("flint: couldn't start again; start Flint yourself");
+                    eprintln!("tendril: couldn't start again; start Tendril yourself");
                     ExitCode::FAILURE
                 }
             }
         }
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("flint: {e}");
+            eprintln!("tendril: {e}");
             ExitCode::FAILURE
         }
     }
@@ -135,7 +135,7 @@ fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::E
     })?;
 
     if start_hidden {
-        println!("flint: running; press {} to open", app.config.borrow().hotkey);
+        println!("tendril: running; press {} to open", app.config.borrow().hotkey);
     } else {
         window::show(&ui);
         if appearance {
@@ -151,10 +151,10 @@ fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::E
 /// winit with the CPU renderer: no GPU context and its driver memory, and plenty fast for a
 /// window this size since only what changed is redrawn. A see-through window needs the GPU
 /// renderer everywhere but X11, so that's used when blur is on there; if it can't start (no
-/// OpenGL), Flint falls back to the CPU and a solid window.
+/// OpenGL), Tendril falls back to the CPU and a solid window.
 fn select_backend(blur: bool) -> Result<(), slint::PlatformError> {
     let gpu = blur && window::needs_gpu_for_blur();
-    let wanted = std::env::var("FLINT_RENDERER").unwrap_or_else(|_| if gpu { "femtovg" } else { "software" }.into());
+    let wanted = std::env::var("TENDRIL_RENDERER").unwrap_or_else(|_| if gpu { "femtovg" } else { "software" }.into());
     match selector(&wanted).select() {
         Ok(()) => {
             let gpu = wanted != "software";
@@ -162,7 +162,7 @@ fn select_backend(blur: bool) -> Result<(), slint::PlatformError> {
             Ok(())
         }
         Err(e) if wanted != "software" => {
-            eprintln!("flint: couldn't draw with the GPU ({e}); using a solid window");
+            eprintln!("tendril: couldn't draw with the GPU ({e}); using a solid window");
             window::set_renderer(false, !window::needs_gpu_for_blur());
             selector("software").select()
         }
@@ -179,7 +179,7 @@ fn selector(renderer: &str) -> slint::BackendSelector {
     #[cfg(target_os = "macos")]
     {
         use slint::winit_030::winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
-        // No Dock icon and no menu bar: Flint is a panel, not an app you switch to.
+        // No Dock icon and no menu bar: Tendril is a panel, not an app you switch to.
         let mut builder = slint::winit_030::winit::event_loop::EventLoop::<slint::winit_030::SlintEvent>::with_user_event();
         builder.with_activation_policy(ActivationPolicy::Accessory);
         selector = selector.with_winit_event_loop_builder(builder);

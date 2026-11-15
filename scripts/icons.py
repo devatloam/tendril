@@ -1,4 +1,4 @@
-"""Draws Flint's icons into ui/icons/: each as an outline and a solid, in the style of Blight's
+"""Draws Tendril's icons into ui/icons/: each as an outline and a solid, in the style of Blight's
 dashboard icons (apps/dashboard/src/lib/icons.ts): Lucide's 24 square, round ends, one colour.
 The outline is the usual one; the solid is for the row you're on.
 
@@ -26,12 +26,12 @@ def rect(x, y, w, h, r): return shape(f"M{x + r} {y}h{w - 2 * r}a{r} {r} 0 0 1 {
 
 STAR = "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17.1 6.6 19.9l1-6.1-4.4-4.3 6.1-.9Z"
 SPARK = "M12 3c.7 4.7 2.3 6.3 7 7-4.7.7-6.3 2.3-7 7-.7-4.7-2.3-6.3-7-7 4.7-.7 6.3-2.3 7-7Z"
-BOLT = "M13.2 2.8 5.2 13.4h6.1l-.9 7.8 8.2-10.8h-6.1Z"
 PALETTE = "M12 3a9 9 0 0 0 0 18c1.3 0 2-.9 2-1.9 0-1.3-1-1.7-1-2.9 0-1 .8-1.7 1.8-1.7h2.3A3.9 3.9 0 0 0 21 10.6C21 6.4 17 3 12 3Z"
 
 ICONS = {
-    # Flint itself: the spark you get from striking flint.
-    "bolt": [shape(BOLT)],
+    # Tendril's mark: a tendril curling as it reaches out, with a leaf where it starts.
+    "tendril": [line("M5 21c0-6.6 4-11.2 9.6-11.2 3.5 0 5.9 2.1 5.9 5 0 2.5-1.8 4.2-4 4.2-1.8 0-3-1.2-3-2.7"),
+                shape("M10.3 12.6C8.1 7.5 10 3.4 15.8 2.3c1.1 5.2-1.5 9-5.5 10.3Z")],
     "app": [rect(3.5, 3.5, 7, 7, 2), rect(13.5, 3.5, 7, 7, 2), rect(3.5, 13.5, 7, 7, 2), rect(13.5, 13.5, 7, 7, 2)],
     "lock": [rect(5, 10.5, 14, 10, 2.5), line("M8 10.5V7.5a4 4 0 0 1 8 0v3"), hole(12, 15.5, 1.4)],
     "moon": [shape("M20 14.3A8 8 0 1 1 9.7 4a6.3 6.3 0 0 0 10.3 10.3Z"), line("M17.5 3v3.5"), line("M15.75 4.75h3.5")],

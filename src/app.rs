@@ -33,10 +33,10 @@ const RESCAN_AFTER: Duration = Duration::from_secs(120);
 /// The least time the "looking for apps" shapes stay up.
 const MIN_BUSY: Duration = Duration::from_millis(900);
 
-/// Set when Flint should start itself again after quitting (main.rs does it): a setting changed
+/// Set when Tendril should start itself again after quitting (main.rs does it): a setting changed
 /// that needs a different renderer.
 pub static RESTART: AtomicBool = AtomicBool::new(false);
-/// Whether the next Flint opens on the Appearance view.
+/// Whether the next Tendril opens on the Appearance view.
 pub static RESTART_TO_APPEARANCE: AtomicBool = AtomicBool::new(false);
 
 /// The walkthrough's steps: welcome, shortcut, look, layout, done.
@@ -203,14 +203,14 @@ impl App {
 
     fn set_context(&self, ui: &Launcher) {
         let appearance = self.in_appearance.get();
-        ui.set_context_icon(self.icons.borrow_mut().builtin_solid(if appearance { "palette" } else { "bolt" }));
-        // Blue: Flint's one colour, as blue leads on Blight's dashboard.
+        ui.set_context_icon(self.icons.borrow_mut().builtin_solid(if appearance { "palette" } else { "tendril" }));
+        // Blue: Tendril's one colour, as blue leads on Blight's dashboard.
         ui.set_context_tint(2);
-        ui.set_context_title(if appearance { "Appearance" } else { "Flint" }.into());
+        ui.set_context_title(if appearance { "Appearance" } else { "Tendril" }.into());
         ui.set_placeholder(if appearance { "Search settings…" } else { "Search for apps and commands…" }.into());
     }
 
-    /// Opens the Appearance view, as the "Appearance" command and `flint --appearance` do.
+    /// Opens the Appearance view, as the "Appearance" command and `tendril --appearance` do.
     pub fn open_appearance(&self) {
         let Some(ui) = self.ui.upgrade() else { return };
         self.in_appearance.set(true);
@@ -266,12 +266,12 @@ impl App {
         self.apply_appearance();
         let wayland = !self.hotkeys.borrow().as_ref().is_some_and(|h| h.available());
         let (title, body) = match step {
-            0 => ("Welcome to Flint", "Let's set it up. It takes a minute, and all of it can be changed later."),
+            0 => ("Welcome to Tendril", "Let's set it up. It takes a minute, and all of it can be changed later."),
             1 if wayland => (
                 "Your shortcut",
-                "Wayland doesn't let apps take keys for themselves. In your desktop's keyboard settings, add a shortcut that runs flint toggle.",
+                "Wayland doesn't let apps take keys for themselves. In your desktop's keyboard settings, add a shortcut that runs tendril toggle.",
             ),
-            1 => ("Your shortcut", "Press the keys you'd like to open Flint with, from anywhere. Enter keeps what's there."),
+            1 => ("Your shortcut", "Press the keys you'd like to open Tendril with, from anywhere. Enter keeps what's there."),
             2 => ("How it looks", "Changes show straight away, behind this."),
             3 => ("How it's laid out", "What you see before you type, and as you do."),
             _ => ("You're set", "Search for Appearance whenever you'd like to change something."),
@@ -305,7 +305,7 @@ impl App {
         self.set_context(&ui);
         self.refresh("");
         if self.restart_after_onboarding.replace(false) {
-            self.toast("Restarting to change how Flint draws…", false);
+            self.toast("Restarting to change how Tendril draws…", false);
             RESTART.store(true, Ordering::SeqCst);
             Timer::single_shot(Duration::from_millis(700), || {
                 let _ = slint::quit_event_loop();
@@ -572,16 +572,16 @@ impl App {
             keys.iter().filter_map(|k| all.iter().find(|s| s.key == *k)).map(setting_item).map(Line::Item).collect()
         };
         match step {
-            0 => vec![Line::Hero("Flint".into(), "A keyboard launcher. No web views, nothing sent anywhere.".into())],
+            0 => vec![Line::Hero("Tendril".into(), "A keyboard launcher. No web views, nothing sent anywhere.".into())],
             1 => {
-                let mut lines = vec![Line::Section("Open Flint with".into()), Line::Item(shortcut_item())];
+                let mut lines = vec![Line::Section("Open Tendril with".into()), Line::Item(shortcut_item())];
                 lines.push(Line::Section("When you log in".into()));
                 lines.extend(settings(&["login"]));
                 lines
             }
             2 => std::iter::once(Line::Section("Look".into())).chain(settings(appearance::LOOK)).collect(),
             3 => std::iter::once(Line::Section("Layout".into())).chain(settings(appearance::LAYOUT)).collect(),
-            _ => vec![Line::Hero("to open Flint from anywhere".into(), "Type to find apps, do sums and run commands.".into())],
+            _ => vec![Line::Hero("to open Tendril from anywhere".into(), "Type to find apps, do sums and run commands.".into())],
         }
     }
 
@@ -613,7 +613,7 @@ impl App {
     fn update_bar(&self, ui: &Launcher) {
         let item = self.selected_item();
         // While the shortcut row is selected, the keys are let go of, so pressing them records
-        // them instead of closing Flint.
+        // them instead of closing Tendril.
         let recording = item.as_ref().is_some_and(|i| matches!(i.run, Run::Shortcut));
         if recording != ui.get_recording() {
             ui.set_recording(recording);
@@ -664,7 +664,7 @@ impl App {
                     fact("Opened", if count == 1 { "Once".into() } else { format!("{count} times") });
                     fact("Last opened", ago(crate::usage::now().saturating_sub(last)));
                 }
-                None => fact("Opened", "Not from Flint yet".into()),
+                None => fact("Opened", "Not from Tendril yet".into()),
             }
         }
         let kind = match item.kind {
@@ -728,7 +728,7 @@ impl App {
             self.toast("Blur changes when you finish", false);
         } else if after != before.appearance.blur && window::needs_restart(after) {
             RESTART_TO_APPEARANCE.store(true, Ordering::SeqCst);
-            self.toast("Restarting to change how Flint draws…", false);
+            self.toast("Restarting to change how Tendril draws…", false);
             RESTART.store(true, Ordering::SeqCst);
             Timer::single_shot(Duration::from_millis(700), || {
                 let _ = slint::quit_event_loop();
@@ -1039,7 +1039,7 @@ fn shortcut_item() -> Item {
         subtitle: String::new(),
         keywords: String::new(),
         kind: Kind::Command,
-        icon: crate::catalog::Icon::Builtin("bolt"),
+        icon: crate::catalog::Icon::Builtin("tendril"),
         tint: 7,
         run: Run::Shortcut,
         path: None,

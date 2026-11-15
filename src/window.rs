@@ -1,5 +1,5 @@
 //! Opening, placing and closing the window. Closing destroys it (see main.rs), so between uses
-//! Flint holds no window and no pixels, only the list it searches.
+//! Tendril holds no window and no pixels, only the list it searches.
 
 use crate::Launcher;
 use crate::app::with_app;
@@ -35,7 +35,7 @@ pub fn needs_gpu_for_blur() -> bool {
     cfg!(any(windows, target_os = "macos")) || (cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some())
 }
 
-/// Whether turning blur on or off here needs Flint to start again with another renderer.
+/// Whether turning blur on or off here needs Tendril to start again with another renderer.
 pub fn needs_restart(blur: bool) -> bool {
     needs_gpu_for_blur() && blur != GPU.load(Ordering::Relaxed)
 }
@@ -50,8 +50,8 @@ pub fn attributes(attrs: WindowAttributes) -> WindowAttributes {
         use winit::platform::wayland::WindowAttributesExtWayland;
         use winit::platform::x11::{WindowAttributesExtX11, WindowType};
         // Tiling window managers float dialogs; the class lets people write rules for it.
-        let attrs = WindowAttributesExtX11::with_name(attrs, "flint", "Flint");
-        let attrs = WindowAttributesExtWayland::with_name(attrs, "flint", "Flint");
+        let attrs = WindowAttributesExtX11::with_name(attrs, "tendril", "Tendril");
+        let attrs = WindowAttributesExtWayland::with_name(attrs, "tendril", "Tendril");
         attrs.with_x11_window_type(vec![WindowType::Dialog])
     };
     #[cfg(windows)]
@@ -116,7 +116,7 @@ pub fn show(ui: &Launcher) {
             ui.window().set_position(slint::PhysicalPosition::new(x, y));
         }
         if let Err(e) = ui.show() {
-            eprintln!("flint: couldn't open the window: {e}");
+            eprintln!("tendril: couldn't open the window: {e}");
             return;
         }
     }

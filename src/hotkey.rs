@@ -1,8 +1,8 @@
-//! The keys that open Flint from anywhere.
+//! The keys that open Tendril from anywhere.
 //!
-//! Windows and macOS use the global-hotkey crate. On X11, Flint grabs the key itself and its
+//! Windows and macOS use the global-hotkey crate. On X11, Tendril grabs the key itself and its
 //! thread sleeps until X has an event, where the crate checks for one every 50ms. On Wayland
-//! there's no key to grab; bind `flint toggle` in your desktop's settings.
+//! there's no key to grab; bind `tendril toggle` in your desktop's settings.
 
 use crate::app::with_app;
 use crate::window;
@@ -28,7 +28,7 @@ pub struct Hotkeys {
 impl Hotkeys {
     pub fn new() -> Hotkeys {
         let backend =
-            Backend::new().map_err(|e| eprintln!("flint: no global hotkey here ({e}); bind `flint toggle` to a key instead")).ok();
+            Backend::new().map_err(|e| eprintln!("tendril: no global hotkey here ({e}); bind `tendril toggle` to a key instead")).ok();
         Hotkeys { backend, current: RefCell::new(None), paused: std::cell::Cell::new(false) }
     }
 
@@ -44,7 +44,7 @@ impl Hotkeys {
             return;
         }
         if let Err(e) = self.change(text) {
-            eprintln!("flint: couldn't take {text} ({e})");
+            eprintln!("tendril: couldn't take {text} ({e})");
         }
     }
 
@@ -160,7 +160,6 @@ pub fn keycaps(combo: &str) -> Vec<String> {
         })
         .collect()
 }
-
 
 #[cfg(not(target_os = "linux"))]
 struct Backend {

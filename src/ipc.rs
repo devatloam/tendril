@@ -1,5 +1,5 @@
-//! One Flint at a time, and `flint toggle` for desktops without global shortcuts (Wayland):
-//! the running Flint listens on a socket in the runtime folder, and a second one hands it
+//! One Tendril at a time, and `tendril toggle` for desktops without global shortcuts (Wayland):
+//! the running Tendril listens on a socket in the runtime folder, and a second one hands it
 //! a word ("toggle", "show", "hide") and leaves.
 
 #[cfg(unix)]
@@ -12,7 +12,7 @@ mod unix {
     fn path() -> PathBuf {
         let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
         let user = std::env::var("USER").unwrap_or_default();
-        dir.join(format!("flint-{user}.sock"))
+        dir.join(format!("tendril-{user}.sock"))
     }
 
     pub fn send(word: &str) -> std::io::Result<()> {
@@ -24,7 +24,7 @@ mod unix {
     /// Listens on a small thread and calls `on` with each word received.
     pub fn listen(on: impl Fn(String) + Send + 'static) -> std::io::Result<()> {
         let path = path();
-        // Left behind by a Flint that didn't exit cleanly: nothing answered `send`, so it's stale.
+        // Left behind by a Tendril that didn't exit cleanly: nothing answered `send`, so it's stale.
         let _ = std::fs::remove_file(&path);
         let listener = UnixListener::bind(&path)?;
         std::thread::Builder::new().name("ipc".into()).stack_size(64 * 1024).spawn(move || {

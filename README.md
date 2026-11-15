@@ -1,12 +1,14 @@
-# Flint
+# Tendril
+
+By [Loam](https://github.com/loam), alongside [Blight](https://github.com/bluejutzu/blight).
 
 A keyboard launcher in the style of Raycast. Press Alt+Space, type a few letters, press Enter.
 
 It's a native program: Rust, with the UI drawn by [Slint](https://slint.dev) on the CPU. There's no browser engine
 inside it, no GPU context, no account, no AI and nothing sent anywhere. When the window is closed it's destroyed, so
-between uses Flint holds a list of your apps and little else.
+between uses Tendril holds a list of your apps and little else.
 
-![Flint, see-through over a busy desktop](docs/glass.png)
+![Tendril, see-through over a busy desktop](docs/glass.png)
 
 | Favourites and commands            | Details beside the list                    | Actions (Ctrl K)                       |
 | ---------------------------------- | ------------------------------------------ | -------------------------------------- |
@@ -23,12 +25,12 @@ A real desktop with hundreds of apps will use a little more for the list and the
 
 | | |
 | --- | --- |
-| Memory, window closed | 19 MB resident. 2.6 MB of that is Flint's own heap; the rest is its code, which the system can drop and read back |
+| Memory, window closed | 19 MB resident. 2.6 MB of that is Tendril's own heap; the rest is its code, which the system can drop and read back |
 | Memory, window open | 20 MB |
-| Asked to open → window on screen | 7 to 10 ms (via `flint show`), the window being made fresh each time |
+| Asked to open → window on screen | 7 to 10 ms (via `tendril show`), the window being made fresh each time |
 | CPU while closed | 0.03% over 30 seconds: one thread inside Slint's Linux settings watcher wakes twice a second |
 | Binary | 17 MB, fonts and icons included |
-| Blur on Windows, macOS or Wayland | Needs the GPU renderer. Under Mesa's software OpenGL that was about 60 MB more heap, kept while Flint runs; real drivers differ. That's why blur starts off there, and on under X11, where it costs nothing |
+| Blur on Windows, macOS or Wayland | Needs the GPU renderer. Under Mesa's software OpenGL that was about 60 MB more heap, kept while Tendril runs; real drivers differ. That's why blur starts off there, and on under X11, where it costs nothing |
 
 Windows and macOS haven't been measured yet (see [Status](#status)).
 
@@ -36,7 +38,7 @@ Windows and macOS haven't been measured yet (see [Status](#status)).
 
 | Keys | |
 | --- | --- |
-| Alt+Space | Open or close Flint (record another in Appearance → Shortcut) |
+| Alt+Space | Open or close Tendril (record another in Appearance → Shortcut) |
 | ← → | Along the favourite tiles, or through a setting's choices |
 | Ctrl 1–9 | Open the first nine rows, with quick keys on |
 | ↑ ↓, Ctrl N / Ctrl P | Move through the list; Page Up and Page Down jump |
@@ -59,23 +61,23 @@ What you can find:
 - **Themes**: type "theme" for the palettes from Blight's dashboard (Ember, Midnight, Moss, Dusk, Black, Paper, Sepia,
   Mist). Picking one saves it.
 
-White leads and blue highlights, as on Blight's dashboard: the selected row, its icon and Flint's mark are blue, and
-other colours appear only where they mean something (red for shutting down, green when something worked). Flint's icons
+White leads and blue highlights, as on Blight's dashboard: the selected row, its icon and Tendril's mark are blue, and
+other colours appear only where they mean something (red for shutting down, green when something worked). Tendril's icons
 are drawn the way the dashboard's are, on Lucide's 24 grid, with an outline and a solid for the selected row;
 `scripts/icons.py` draws both from one description.
 
-Blight's tumbling shapes and its colour glow are here too. While Flint looks for apps, a line of clay, blue and green
+Blight's tumbling shapes and its colour glow are here too. While Tendril looks for apps, a line of clay, blue and green
 runs under the search field and the shapes toss in the bar. When nothing matches, they lie where they fell on a still
-glow. When something works, like copying an answer, they hop twice. "About Flint" shows them over the drifting glow.
+glow. When something works, like copying an answer, they hop twice. "About Tendril" shows them over the drifting glow.
 
-Flint remembers what you pick for what you type, so if `f` once led you to Firefox, `f` puts Firefox first next time.
+Tendril remembers what you pick for what you type, so if `f` once led you to Firefox, `f` puts Firefox first next time.
 That's kept in `usage.toml` on your computer and nowhere else. Ctrl K → Reset Ranking forgets an item.
 
 ## First run
 
-The first time it opens, Flint walks you through five short steps: a welcome, the shortcut that opens it (press the
+The first time it opens, Tendril walks you through five short steps: a welcome, the shortcut that opens it (press the
 keys you want; it checks no other app holds them), how it looks, how it's laid out, and done. Esc goes back, or skips
-from the first step. "Set Up Flint" runs it again.
+from the first step. "Set Up Tendril" runs it again.
 
 ## Appearance
 
@@ -98,20 +100,20 @@ Search for "Appearance". Every row changes with Enter or ← →, shows straight
 | Close on click away | |
 | Open at login | Starts hidden when you log in |
 
-Turning blur on or off where it needs the GPU renderer restarts Flint, which takes about a second.
+Turning blur on or off where it needs the GPU renderer restarts Tendril, which takes about a second.
 
 ### Where the blur comes from
 
 - **Windows**: the system's acrylic or Mica, asked for through `window-vibrancy`.
 - **macOS**: an `NSVisualEffectView` with the material you pick.
-- **Linux, X11**: Flint draws a see-through window. KDE blurs behind it when asked, and Flint asks. With picom, turn on
+- **Linux, X11**: Tendril draws a see-through window. KDE blurs behind it when asked, and Tendril asks. With picom, turn on
   `blur-background`; without a compositor the window is just translucent.
 - **Linux, Wayland**: Hyprland, and Sway with SwayFX, blur see-through windows by their own settings; GNOME doesn't.
 
 ## Settings
 
-`config.toml` lives in `~/.config/flint/` on Linux, `%APPDATA%\flint\` on Windows and
-`~/Library/Application Support/flint/` on macOS. It's written with comments the first time Flint starts, and read again
+`config.toml` lives in `~/.config/tendril/` on Linux, `%APPDATA%\tendril\` on Windows and
+`~/Library/Application Support/tendril/` on macOS. It's written with comments the first time Tendril starts, and read again
 each time the window opens.
 
 ```toml
@@ -142,7 +144,7 @@ You need Rust 1.92 or newer.
 
 ```bash
 cargo run              # a debug build
-cargo build --release  # target/release/flint
+cargo build --release  # target/release/tendril
 cargo test
 ```
 
@@ -150,15 +152,15 @@ On Linux, winit loads `libxkbcommon-x11` at runtime; most desktops have it (`apt
 
 ### Starting at login
 
-Turn on "Open at login" in Appearance or during the first run. It writes `~/.config/autostart/flint.desktop` on Linux,
-a `Flint` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, and
-`~/Library/LaunchAgents/dev.flint.launcher.plist` on macOS, each running `flint --hidden`.
+Turn on "Open at login" in Appearance or during the first run. It writes `~/.config/autostart/tendril.desktop` on Linux,
+a `Tendril` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, and
+`~/Library/LaunchAgents/dev.loam.tendril.plist` on macOS, each running `tendril --hidden`.
 
 ### Wayland
 
-Wayland doesn't let an app take a key for itself, so Flint can't grab Alt+Space there. Bind a key to `flint toggle` in
+Wayland doesn't let an app take a key for itself, so Tendril can't grab Alt+Space there. Bind a key to `tendril toggle` in
 your compositor instead (GNOME: Settings → Keyboard → Custom Shortcuts; Sway/Hyprland: a `bindsym`/`bind` line).
-Wayland also decides where windows go, so Flint can't centre itself there.
+Wayland also decides where windows go, so Tendril can't centre itself there.
 
 ## How it's put together
 
@@ -168,7 +170,7 @@ ui/              the window, in Slint's markup
   parts.slint    rows, the calculator card, the actions panel, the confirm dialog, keycaps
   motion.slint   the tumbling shapes, the drifting glow and the loading line
   theme.slint    colour tokens (set from Rust) and motion timings
-  icons/         Flint's own icons, outline and solid (drawn by scripts/icons.py)
+  icons/         Tendril's own icons, outline and solid (drawn by scripts/icons.py)
 src/
   main.rs        arguments, one-instance check, picking the renderer, restarting
   app.rs         the state behind the window: typing, moving, Enter, actions, toasts, the first run
@@ -176,12 +178,12 @@ src/
   autostart.rs   open at login, per system
   window.rs      opening, placing and closing the window
   search.rs      what you typed → calculator, ranked matches, fallbacks
-  catalog.rs     the item model, and Flint's own commands
+  catalog.rs     the item model, and Tendril's own commands
   apps/          finding and launching apps: linux.rs, windows.rs, macos.rs
   calc.rs        the arithmetic parser
   icons.rs       loading icons on demand, scaled to 64px
   hotkey.rs      the global key (an X11 grab on Linux; global-hotkey elsewhere)
-  ipc.rs         the socket behind `flint toggle`
+  ipc.rs         the socket behind `tendril toggle`
   usage.rs       what you open, for ranking
   config.rs      config.toml
   palettes.rs    Blight's palettes

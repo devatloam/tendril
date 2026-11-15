@@ -19,6 +19,7 @@ mod search;
 mod sites;
 mod switcher;
 mod system;
+mod tray;
 mod update;
 mod usage;
 mod window;
@@ -83,8 +84,13 @@ fn main() -> ExitCode {
     }
 
     // Hiding destroys the window instead of keeping it, so its pixel buffer is freed while
-    // you're not using it. Set before any thread starts.
-    unsafe { std::env::set_var("SLINT_DESTROY_WINDOW_ON_HIDE", "1") };
+    // you're not using it. Set before any thread starts. Not on Windows: there a window made
+    // afresh on every open is slow to appear and often isn't allowed to take focus, so it's
+    // kept and only hidden, as Flow Launcher does. Hidden, it draws nothing.
+    #[cfg(not(windows))]
+    unsafe {
+        std::env::set_var("SLINT_DESTROY_WINDOW_ON_HIDE", "1")
+    };
 
     match run(start_hidden, appearance) {
         Ok(()) if app::RESTART.load(std::sync::atomic::Ordering::SeqCst) => {
@@ -138,6 +144,7 @@ fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::E
     ui.set_frameless(!cfg!(target_os = "macos"));
     let app = App::install(&ui, config);
     window::watch(&ui);
+    app.load_cached_apps();
     app.rescan(false);
 
     let hotkeys = hotkey::Hotkeys::new();
@@ -145,6 +152,7 @@ fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::E
     app.set_hotkeys(hotkeys);
     app.start_update_checks();
     app.start_clipboard();
+    tray::start();
 
     ipc::listen(|word| {
         let _ = slint::invoke_from_event_loop(move || {

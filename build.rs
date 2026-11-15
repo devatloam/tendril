@@ -9,7 +9,8 @@ fn main() {
     #[cfg(windows)]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut resource = winresource::WindowsResource::new();
-        resource.set_icon("assets/tendril.ico");
+        // ID 1: the tray icon (tray.rs) loads it by that number.
+        resource.set_icon_with_id("assets/tendril.ico", "1");
         resource.compile().expect("the Windows icon compiles");
     }
 }

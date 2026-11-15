@@ -508,6 +508,18 @@ impl App {
     }
 
     /// Looks for installed apps on a background thread; the list updates when it's done.
+    /// The apps found last time, straight away; a fresh scan replaces them when it's done.
+    pub fn load_cached_apps(&self) {
+        let mut cached = apps::cached();
+        if cached.is_empty() {
+            return;
+        }
+        cached.sort_by_key(|a| a.title.to_lowercase());
+        self.app_count.set(cached.len());
+        *self.apps.borrow_mut() = cached;
+        self.rebuild_catalog();
+    }
+
     pub fn rescan(&self, tell: bool) {
         if self.scanning.replace(true) {
             return;
@@ -516,9 +528,10 @@ impl App {
         let started = Instant::now();
         let spawned = std::thread::Builder::new().name("scan".into()).spawn(move || {
             let found = apps::scan();
-            // A scan can finish in a few milliseconds; keep the shapes up long enough to be seen
-            // rather than flashing.
-            if let Some(rest) = MIN_BUSY.checked_sub(started.elapsed()) {
+            apps::remember(&found);
+            // When you asked for it (Reload Apps), keep the shapes up long enough to be seen
+            // rather than flashing. Otherwise nobody's waiting on it: no delay.
+            if tell && let Some(rest) = MIN_BUSY.checked_sub(started.elapsed()) {
                 std::thread::sleep(rest);
             }
             let _ = slint::invoke_from_event_loop(move || with_app(|a| a.scanned(found, tell)));

@@ -4,7 +4,7 @@ use crate::catalog::{Icon, Item, Kind, Run};
 use std::io;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Launch {
     bundle: PathBuf,
 }

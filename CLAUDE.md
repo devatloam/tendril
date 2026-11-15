@@ -30,9 +30,10 @@ Windows and macOS can be checked from Linux: `rustup target add x86_64-pc-window
 
 ## Rules that keep it light
 
-- **Nothing runs while closed.** Hiding destroys the window and clears focus (which stops the caret timer). No thread
-  polls: the hotkey, socket and event loop threads block until something happens. Check with
-  `strace -f -p <pid> -e trace=epoll_pwait` while hidden: about one wakeup in five seconds is the baseline.
+- **Nothing runs while closed.** Hiding destroys the window (except on Windows, where it's kept and hidden, as Flow
+  Launcher does: a fresh window there opens slowly and often isn't allowed focus) and clears focus (which stops the
+  caret timer). No thread polls: the hotkey, socket and event loop threads block until something happens. Check
+  with `strace -f -p <pid> -e trace=epoll_pwait` while hidden: about one wakeup in five seconds is the baseline.
 - **Animations exist only while on screen.** Anything that moves reads `animation-tick()` and sits behind an `if`.
   The CPU renderer can't rotate elements; turned shapes are paths (see `Shape` in motion.slint).
 - **The CPU renderer is the default.** The GPU one (femtovg) is only for blur where X11 isn't available, because it
@@ -59,6 +60,15 @@ Windows and macOS can be checked from Linux: `rustup target add x86_64-pc-window
   `scripts/icons.py`, running it, and listing it in `src/icons.rs`.
 - Write like Blight: plain words from the user's side, short sentences, no marketing. Comments say why, not what.
   No AI features.
+
+## Trying it on Windows without Windows
+
+`.github/workflows/smoke.yml` runs `scripts/smoke.ps1` on a GitHub Windows runner, which has a real desktop: first
+start, recording a shortcut, typing fast (timed through UI Automation), clicking away, the shortcut, starting it again,
+clipboard history. It runs on pushes that touch src/ or ui/ and by hand. Read the results without downloading anything:
+`curl https://raw.githubusercontent.com/devatloam/tendril/smoke-results/smoke/report.txt`, and the screenshots beside
+it (`01-first-start.png` …). Run it after changing anything Windows-specific; Clippy only proves it compiles. On Windows
+Tendril logs to `%LOCALAPPDATA%\tendril\tendril.log`.
 
 ## Trying it without a desktop
 

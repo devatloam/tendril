@@ -16,6 +16,9 @@ pub struct Config {
     pub onboarded: bool,
     /// "auto" installs new versions, "notify" offers them, "off" never asks GitHub.
     pub updates: String,
+    /// Preview versions, built from every change before a release: "ask" offers the newest one
+    /// beside updates, "always" follows them, "never" stays on releases.
+    pub previews: String,
     pub appearance: Appearance,
     pub search: Vec<Engine>,
     /// Your own links, [[quicklink]] in the file.
@@ -126,6 +129,7 @@ impl Default for Config {
             hide_on_blur: true,
             onboarded: false,
             updates: "auto".into(),
+            previews: "ask".into(),
             appearance: Appearance::default(),
             search: vec![
                 Engine { name: "Google".into(), url: "https://www.google.com/search?q={query}".into() },
@@ -159,6 +163,11 @@ onboarded = false
 # offers them, "off" never asks. Checking is the one thing Tendril sends anywhere: a request to
 # GitHub for the latest release, every six hours while it runs.
 updates = "auto"
+
+# Preview versions are built from every change, before it's in a release, so they get new things
+# first and can be rough. "ask" offers the newest one beside updates, "always" installs them as
+# they come (and the next release once it's newer), "never" sticks to releases.
+previews = "ask"
 
 [appearance]
 # See through the window, with what's behind it blurred. On Linux under X11 this costs nothing

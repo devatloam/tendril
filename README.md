@@ -26,6 +26,16 @@ and puts it in place for the next start. "Check for Updates" asks now; Appearanc
 off. A copy you built yourself, or one in a folder Tendril can't write to, tells you about new versions but doesn't
 replace itself.
 
+### Preview versions
+
+Every change to main is built and published as a nightly, a prerelease named like `v0.2.1-nightly.20261115.42`: the
+next version, then what kind of preview it is, the day and the build number. They get new things first and can be
+rough. When there's one newer than what you have, the Update section at the top of the list offers "Install Preview
+Version?"; taking it switches you to previews, and Tendril installs each new one as it comes. A preview sorts before the
+release it leads up to, so once 0.2.1 itself is out you move on to it. Appearance → Preview versions sets this to Ask,
+Always or Never ("Don't Offer Previews" in the row's actions does the same as Never). Only the ten newest nightlies are
+kept.
+
 ![Tendril, see-through over a busy desktop](docs/glass.png)
 
 | Favourites and commands            | Details beside the list                    | Actions (Ctrl K)                       |
@@ -123,6 +133,8 @@ Search for "Appearance". Every row changes with Enter or ← →, shows straight
 | Headings | Above each group |
 | Close on click away | |
 | Open at login | Starts hidden when you log in |
+| Updates | Automatic, Tell me, or Off |
+| Preview versions | Ask, Always, or Never |
 
 Turning blur on or off where it needs the GPU renderer restarts Tendril, which takes about a second.
 
@@ -147,6 +159,7 @@ dark_theme = "ember"
 light_theme = "paper"
 hide_on_blur = true
 updates = "auto"              # "notify", "off"
+previews = "ask"              # "always", "never"
 
 [appearance]
 blur = true
@@ -184,6 +197,26 @@ cargo test
 
 On Linux, winit loads `libxkbcommon-x11` at runtime; most desktops have it (`apt install libxkbcommon-x11-0` if not).
 
+### Releasing
+
+The release scripts need [Bun](https://bun.sh) and nothing else (no `bun install`):
+
+```bash
+bun run bump patch --dry-run   # what the next version and its notes would be
+bun run bump minor --push      # 0.1.4 → 0.2.0: sets Cargo.toml and Cargo.lock, commits, tags v0.2.0, pushes
+```
+
+`bump` takes `patch`, `minor`, `major` or an exact version like `1.0.0`. Without `--push` it commits and tags locally and
+prints the push command. The tag starts `release.yml`, which builds every system and publishes the release the updater
+offers. Nightlies need nothing: `check.yml` publishes one after every push to main that passes its checks.
+
+Release notes follow T3 Code's: a header with the number of changes and contributors, a bullet for each change worth
+reading about (up to seven, with the first sentence of the commit message's prose), a count of what's left
+("Plus 3 more bug fixes"), and every commit folded under "Full changelog". Commits starting with `fix:` are counted as
+fixes; `docs:`, `chore:`, `ci:`, `test:`, `build:`, `style:` and `refactor:` are listed in the full changelog only.
+T3 Code has a model write its bullets; these come straight from the commit messages, so a clear subject line is the
+changelog.
+
 ### Starting at login
 
 Turn on "Open at login" in Appearance or during the first run. It writes `~/.config/autostart/tendril.desktop` on Linux,
@@ -218,7 +251,7 @@ src/
   icons.rs       loading icons on demand, scaled to 64px
   hotkey.rs      the global key (an X11 grab on Linux; global-hotkey elsewhere)
   ipc.rs         the socket behind `tendril toggle`
-  update.rs      checking GitHub for a new version, and putting it in place
+  update.rs      checking GitHub for a new version or preview, and putting it in place
   paths.rs       listing a folder as you type its path
   usage.rs       what you open, for ranking
   config.rs      config.toml
@@ -226,7 +259,8 @@ src/
 fonts/           Geist (SIL Open Font License)
 assets/          Tendril's app icon, as SVG, PNG, ICO and ICNS
 packaging/       what goes into a release besides the binary: the Linux menu entry and installer, the macOS Info.plist
-.github/         check.yml on every push; release.yml on a version tag
+scripts/         icons.py draws ui/icons/; release.ts versions, bumps and writes release notes (bun run bump)
+.github/         check.yml on every push, and a nightly from main; release.yml on a version tag; build.yml for both
 ```
 
 Things that keep it light, if you're changing it:

@@ -83,6 +83,8 @@ pub struct App {
     scanned_at: Cell<Option<Instant>>,
     scanning: Cell<bool>,
     update: RefCell<UpdateState>,
+    /// With previews on "ask": the newest preview, offered below any update.
+    preview_offer: RefCell<Option<update::Release>>,
     /// Checking or downloading an update right now.
     updating: Cell<bool>,
     update_thread: Cell<bool>,
@@ -111,6 +113,7 @@ enum Act {
     Copy(&'static str, String),
     Reveal(PathBuf),
     Forget,
+    NoPreviews,
 }
 
 impl App {
@@ -138,6 +141,7 @@ impl App {
             scanned_at: Cell::new(None),
             scanning: Cell::new(false),
             update: RefCell::new(UpdateState::Quiet),
+            preview_offer: RefCell::new(None),
             updating: Cell::new(false),
             update_thread: Cell::new(false),
             app_count: Cell::new(0),
@@ -439,7 +443,7 @@ impl App {
             std::thread::sleep(FIRST_UPDATE_CHECK);
             loop {
                 if UPDATES_ON.load(Ordering::Relaxed) {
-                    let result = update::latest();
+                    let result = update::check();
                     let _ = slint::invoke_from_event_loop(move || with_app(|a| a.update_checked(result, false)));
                 }
                 std::thread::sleep(UPDATE_EVERY);
@@ -454,7 +458,7 @@ impl App {
         }
         self.set_busy(true);
         let spawned = std::thread::Builder::new().name("update-check".into()).spawn(|| {
-            let result = update::latest();
+            let result = update::check();
             let _ = slint::invoke_from_event_loop(move || {
                 with_app(|a| {
                     a.updating.set(false);
@@ -469,38 +473,87 @@ impl App {
         }
     }
 
-    fn update_checked(&self, result: Result<Option<update::Release>, String>, asked: bool) {
-        let ours = env!("CARGO_PKG_VERSION");
-        let mode = self.config.borrow().updates.clone();
+    fn update_checked(&self, result: Result<update::Found, String>, asked: bool) {
+        let ours = update::VERSION;
+        let (mode, previews) = {
+            let config = self.config.borrow();
+            (config.updates.clone(), config.previews.clone())
+        };
         if mode == "off" && !asked {
             return;
         }
-        match result {
-            Ok(Some(release)) if update::newer(&release.version, ours) => {
-                let known = match &*self.update.borrow() {
-                    UpdateState::Ready(v) | UpdateState::Installing(v) => *v == release.version,
-                    _ => false,
-                };
-                if known {
-                    if asked {
-                        self.toast(&format!("Tendril {} is already on its way", release.version), false);
-                    }
-                    return;
+        let update::Found { release, preview } = match result {
+            Ok(found) => found,
+            Err(e) => {
+                if asked {
+                    self.toast(&format!("Couldn't check for updates: {e}"), true);
                 }
-                if mode == "auto" && update::cannot_install(&release).is_none() {
-                    self.install_update(release, asked);
-                } else {
-                    if asked {
-                        self.toast(&format!("Tendril {} is out", release.version), false);
-                    }
-                    *self.update.borrow_mut() = UpdateState::Available(release);
-                    self.refresh_if_root();
-                }
+                return;
             }
-            Ok(_) if asked => self.toast(&format!("You're on the latest version ({ours})"), false),
-            Ok(_) => {}
-            Err(e) if asked => self.toast(&format!("Couldn't check for updates: {e}"), true),
-            Err(_) => {}
+        };
+        // Following previews, whichever of the two is newer; otherwise releases only.
+        let preview_wins = previews == "always"
+            && preview.as_ref().is_some_and(|p| release.as_ref().is_none_or(|r| update::newer(&p.version, &r.version)));
+        let candidate = if preview_wins { preview.clone() } else { release }.filter(|c| update::newer(&c.version, ours));
+        // On "ask", the newest preview is offered when it's ahead of everything else.
+        let offer = preview.filter(|p| {
+            previews == "ask"
+                && update::newer(&p.version, ours)
+                && candidate.as_ref().is_none_or(|c| update::newer(&p.version, &c.version))
+                && update::cannot_install(p).is_none()
+        });
+        *self.preview_offer.borrow_mut() = offer;
+
+        let Some(release) = candidate else {
+            if asked {
+                self.toast(&format!("You're on the latest version ({ours})"), false);
+            }
+            self.refresh_if_root();
+            return;
+        };
+        let known = match &*self.update.borrow() {
+            UpdateState::Ready(v) | UpdateState::Installing(v) => *v == release.version,
+            _ => false,
+        };
+        if known {
+            if asked {
+                self.toast(&format!("Tendril {} is already on its way", release.version), false);
+            }
+            self.refresh_if_root();
+            return;
+        }
+        if mode == "auto" && update::cannot_install(&release).is_none() {
+            self.install_update(release, asked);
+        } else {
+            if asked {
+                self.toast(&format!("Tendril {} is out", release.version), false);
+            }
+            *self.update.borrow_mut() = UpdateState::Available(release);
+            self.refresh_if_root();
+        }
+    }
+
+    /// "Install Preview Version?": from now on previews, starting with this one.
+    fn install_preview(&self) {
+        let Some(preview) = self.preview_offer.borrow_mut().take() else { return };
+        if let Err(e) = config::set(None, "previews", config::Value::Text("always")) {
+            self.toast(&format!("Couldn't save the setting: {e}"), true);
+            return;
+        }
+        self.config.borrow_mut().previews = "always".into();
+        self.install_update(preview, true);
+    }
+
+    /// "Don't Offer Previews" on that row.
+    fn decline_previews(&self) {
+        match config::set(None, "previews", config::Value::Text("never")) {
+            Ok(()) => {
+                self.config.borrow_mut().previews = "never".into();
+                self.preview_offer.borrow_mut().take();
+                self.toast("Previews won't be offered. Appearance can turn them back on.", false);
+                self.refresh_if_root();
+            }
+            Err(e) => self.toast(&format!("Couldn't save the setting: {e}"), true),
         }
     }
 
@@ -547,29 +600,53 @@ impl App {
         }
     }
 
-    /// The row offering an update, at the top of the list before you type.
+    /// The rows offering an update or a preview, at the top of the list before you type.
     fn update_lines(&self) -> Vec<Line> {
-        let row = |title: String, subtitle: String, run: Run| Item {
+        let row = |title: String, subtitle: String, icon: &'static str, run: Run| Item {
             id: "update".into(),
             title,
             subtitle,
             keywords: String::new(),
             kind: Kind::Command,
-            icon: crate::catalog::Icon::Builtin("download"),
+            icon: crate::catalog::Icon::Builtin(icon),
             tint: 2,
             run,
             path: None,
         };
-        let ours = env!("CARGO_PKG_VERSION");
-        let item = match &*self.update.borrow() {
-            UpdateState::Available(r) => match update::cannot_install(r) {
-                None => row(format!("Update to {}", r.version), format!("You have {ours}"), Run::InstallUpdate),
-                Some(_) => row(format!("Tendril {} is out", r.version), "Open the release page".into(), Run::Url(r.page.clone())),
-            },
-            UpdateState::Ready(v) => row("Restart to Finish Updating".into(), format!("to {v}"), Run::RestartToUpdate),
-            UpdateState::Quiet | UpdateState::Installing(_) => return Vec::new(),
-        };
-        vec![Line::Section("Update".into()), Line::Item(item)]
+        let ours = update::VERSION;
+        let mut items = Vec::new();
+        match &*self.update.borrow() {
+            UpdateState::Available(r) => items.push(match update::cannot_install(r) {
+                None => {
+                    let what = if r.preview { "Preview" } else { "Release" };
+                    row(format!("Update to {}", r.version), format!("{what} · you have {ours}"), "download", Run::InstallUpdate)
+                }
+                Some(_) => {
+                    row(format!("Tendril {} is out", r.version), "Open the release page".into(), "download", Run::Url(r.page.clone()))
+                }
+            }),
+            UpdateState::Ready(v) => {
+                items.push(row("Restart to Finish Updating".into(), format!("to {v}"), "download", Run::RestartToUpdate))
+            }
+            UpdateState::Quiet | UpdateState::Installing(_) => {}
+        }
+        if let Some(p) = &*self.preview_offer.borrow()
+            && !matches!(&*self.update.borrow(), UpdateState::Installing(v) | UpdateState::Ready(v) if *v == p.version)
+        {
+            let kind = update::kind(&p.version).unwrap_or("preview");
+            let mut item = row(
+                "Install Preview Version?".into(),
+                format!("{} · a {kind} build of the newest changes, before a release", p.version),
+                "flask",
+                Run::InstallPreview,
+            );
+            item.id = "update-preview".into();
+            items.push(item);
+        }
+        if items.is_empty() {
+            return Vec::new();
+        }
+        std::iter::once(Line::Section("Update".into())).chain(items.into_iter().map(Line::Item)).collect()
     }
 
     fn scanned(&self, mut found: Vec<Item>, tell: bool) {
@@ -768,7 +845,7 @@ impl App {
             1 => {
                 let mut lines = vec![Line::Section("Open Tendril with".into()), Line::Item(shortcut_item())];
                 lines.push(Line::Section("Starting and updating".into()));
-                lines.extend(settings(&["login", "updates"]));
+                lines.extend(settings(&["login", "updates", "previews"]));
                 lines
             }
             2 => std::iter::once(Line::Section("Look".into())).chain(settings(appearance::LOOK)).collect(),
@@ -1039,7 +1116,10 @@ impl App {
         }
         if record
             && !matches!(item.kind, Kind::Calculator | Kind::File)
-            && !matches!(item.run, Run::Setting(_) | Run::Shortcut | Run::InstallUpdate | Run::RestartToUpdate | Run::Prefill(_))
+            && !matches!(
+                item.run,
+                Run::Setting(_) | Run::Shortcut | Run::InstallUpdate | Run::InstallPreview | Run::RestartToUpdate | Run::Prefill(_)
+            )
         {
             self.usage.borrow_mut().record(&item.id, &ui.get_query());
             self.usage_changed.set(true);
@@ -1096,6 +1176,10 @@ impl App {
                 }
                 Ok(Done::Stay)
             }
+            Run::InstallPreview => {
+                self.install_preview();
+                Ok(Done::Stay)
+            }
             Run::RestartToUpdate => {
                 RESTART.store(true, Ordering::SeqCst);
                 let _ = slint::quit_event_loop();
@@ -1112,7 +1196,7 @@ impl App {
             Run::About => {
                 let apps = self.app_count.get();
                 ui.set_about_detail(
-                    format!("Version {} · {apps} {} found", env!("CARGO_PKG_VERSION"), if apps == 1 { "app" } else { "apps" }).into(),
+                    format!("Version {} · {apps} {} found", update::VERSION, if apps == 1 { "app" } else { "apps" }).into(),
                 );
                 ui.set_actions_open(false);
                 ui.set_about_open(true);
@@ -1252,6 +1336,7 @@ impl App {
                 self.toast("Ranking reset", false);
                 self.refresh(&ui.get_query());
             }
+            Act::NoPreviews => self.decline_previews(),
         }
     }
 }
@@ -1310,6 +1395,7 @@ fn actions_for(item: &Item, usage: &Usage) -> Vec<Act> {
     match &item.run {
         Run::Copy(_) => acts.push(Act::Copy("sum", format!("{} = {}", item.title, item.subtitle))),
         Run::Url(url) => acts.push(Act::Copy("link", url.clone())),
+        Run::InstallPreview => acts.push(Act::NoPreviews),
         _ => {}
     }
     if let Some(path) = &item.path {
@@ -1335,6 +1421,7 @@ fn describe(act: &Act, item: &Item, second: bool) -> (String, &'static str, Vec<
         Act::Copy(what, _) => (format!("Copy {}", capitalise(what)), "copy", keys, false),
         Act::Reveal(_) => (reveal_label().to_string(), "folder", keys, false),
         Act::Forget => ("Reset Ranking".into(), "eraser", keys, true),
+        Act::NoPreviews => ("Don't Offer Previews".into(), "eraser", keys, false),
     }
 }
 

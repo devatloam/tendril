@@ -1,0 +1,81 @@
+name: Build
+
+# Builds and packages every system for one version. Called by check.yml for nightlies and by
+# release.yml for releases, so both ship the same files.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "The version to build, like 0.2.0 or 0.2.1-nightly.20261115.42"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # 22.04 for an older glibc, so the build runs on more distributions.
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, name: tendril-linux-x86_64 }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: tendril-windows-x86_64.exe }
+          - { os: macos-latest, target: aarch64-apple-darwin, name: tendril-macos-aarch64 }
+          - { os: macos-latest, target: x86_64-apple-darwin, name: tendril-macos-x86_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig-dev libxkbcommon-dev
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+        env:
+          # What the build calls itself, and what the updater compares (src/update.rs).
+          TENDRIL_VERSION: ${{ inputs.version }}
+      - name: Package
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          out=target/${{ matrix.target }}/release
+          mkdir -p dist
+          case "${{ runner.os }}" in
+            Linux)
+              cp "$out/tendril" "dist/${{ matrix.name }}"
+              mkdir -p "pkg/tendril-$VERSION"
+              cp "$out/tendril" packaging/tendril.desktop packaging/install.sh assets/tendril.svg README.md LICENSE "pkg/tendril-$VERSION/"
+              tar -C pkg -czf "dist/tendril-$VERSION-linux-x86_64.tar.gz" "tendril-$VERSION"
+              ;;
+            Windows)
+              cp "$out/tendril.exe" "dist/${{ matrix.name }}"
+              mkdir -p "pkg/tendril-$VERSION"
+              cp "$out/tendril.exe" README.md LICENSE "pkg/tendril-$VERSION/"
+              (cd pkg && 7z a "../dist/tendril-$VERSION-windows-x86_64.zip" "tendril-$VERSION")
+              ;;
+            macOS)
+              arch=${{ matrix.target }}; arch=${arch%%-*}
+              cp "$out/tendril" "dist/${{ matrix.name }}"
+              app=pkg/Tendril.app/Contents
+              mkdir -p "$app/MacOS" "$app/Resources"
+              cp "$out/tendril" "$app/MacOS/tendril"
+              cp assets/tendril.icns "$app/Resources/tendril.icns"
+              # macOS wants plain numbers in the bundle version; previews keep their full name
+              # in the version people see.
+              sed -e "s/<string>VERSION<\/string>/<string>$VERSION<\/string>/" packaging/Info.plist \
+                | awk -v core="${VERSION%%-*}" '/CFBundleVersion/ { sub(/<string>[^<]*<\/string>/, "<string>" core "</string>") } 1' > "$app/Info.plist"
+              # Not signed: the first open needs right-click → Open, or System Settings → Privacy & Security.
+              (cd pkg && ditto -c -k --keepParent Tendril.app "../dist/tendril-$VERSION-macos-$arch.zip")
+              ;;
+          esac
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*

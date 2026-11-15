@@ -57,7 +57,7 @@ fn main() -> ExitCode {
             }
             "--hidden" | "--background" => start_hidden = true,
             "-V" | "--version" => {
-                println!("tendril {}", env!("CARGO_PKG_VERSION"));
+                println!("tendril {}", update::VERSION);
                 return ExitCode::SUCCESS;
             }
             "-h" | "--help" => {

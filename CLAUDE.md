@@ -11,6 +11,7 @@ cargo test                     # unit tests live beside the code, in #[cfg(test)
 cargo clippy --all-targets     # CI runs it with -D warnings, on Linux, Windows and macOS
 cargo fmt                      # rustfmt.toml: 140 columns
 python3 scripts/icons.py       # redraws ui/icons/ from the descriptions in that script
+bun test scripts               # the release script's tests (Bun only, no install step)
 ```
 
 Windows and macOS can be checked from Linux: `rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin`, then
@@ -66,5 +67,13 @@ There's no window manager, so give the window keyboard focus yourself (python-xl
 
 ## Releasing
 
-Push a tag like `v0.2.0` (matching `version` in Cargo.toml). `.github/workflows/release.yml` builds every system and
-attaches archives and bare binaries to a GitHub release; the in-app updater reads that release.
+- `bun run bump patch|minor|major [--push]` (scripts/release.ts) sets Cargo.toml and Cargo.lock, commits
+  "Release vX.Y.Z" and tags it. The tag starts `.github/workflows/release.yml`. Don't edit the version by hand.
+- Every push to main that passes `check.yml` is published as a nightly prerelease, `vX.Y.Z-nightly.<date>.<run>`, where
+  X.Y.Z is the next patch after the last release. CI passes the version in `TENDRIL_VERSION`; use `update::VERSION`,
+  never `CARGO_PKG_VERSION`. `build.yml` does the building and packaging for both.
+- Release notes come from commit messages (T3 Code's layout): the subject is the bullet, the first sentence of a prose
+  body is its detail, `fix:` counts as a fix, `docs:`/`chore:`/`ci:`/`test:`/`build:`/`style:`/`refactor:` only appear in
+  the folded full changelog. Write subjects as what someone using Tendril gets.
+- Version order (src/update.rs `compare`, scripts/release.ts `compareVersions`) must agree: a preview of 0.2.1 sorts
+  after 0.2.0 and before 0.2.1.

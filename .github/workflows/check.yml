@@ -1,9 +1,15 @@
 name: Check
 
+# Every push and pull request is checked on Linux, Windows and macOS. Every push to main is then
+# built and published as a nightly: a prerelease named like v0.2.1-nightly.20261115.42, which
+# Tendril installs for anyone with "Preview versions" on. Releases are tagged; see release.yml.
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -13,7 +19,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -23,10 +29,68 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
-      - run: cargo build --release
-      - uses: actions/upload-artifact@v4
+      - if: runner.os == 'Linux'
+        uses: oven-sh/setup-bun@v2
+      - if: runner.os == 'Linux'
+        run: bun test scripts
+
+  nightly-version:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'devatloam/tendril'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
         with:
-          name: tendril-${{ runner.os }}
-          path: |
-            target/release/tendril
-            target/release/tendril.exe
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - id: version
+        run: echo "version=$(bun scripts/release.ts nightly-version --run ${{ github.run_number }})" >> "$GITHUB_OUTPUT"
+
+  nightly-build:
+    needs: nightly-version
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.nightly-version.outputs.version }}
+
+  nightly:
+    needs: [nightly-version, nightly-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # One publisher at a time, so nightlies go out in order and pruning doesn't race.
+    concurrency:
+      group: nightly
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.nightly-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Notes count from the previous nightly's tag.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Release notes
+        run: |
+          bun scripts/release.ts notes --tag "v$VERSION" --ref "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --output notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish
+        run: |
+          gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Tendril $VERSION" --notes-file notes.md
+      # Only the newest few nightlies are kept; anyone on previews has moved past the rest.
+      - name: Prune old nightlies
+        run: |
+          git fetch --tags --force --quiet
+          for tag in $(bun scripts/release.ts stale-nightlies); do
+            gh release delete "$tag" --cleanup-tag --yes || true
+          done

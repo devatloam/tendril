@@ -120,6 +120,15 @@ pub fn settings(config: &Config) -> Vec<Setting> {
         None,
         texts(&[("auto", "Automatic"), ("notify", "Tell me"), ("off", "Off")], &config.updates),
     );
+    add(
+        "previews",
+        "Preview versions",
+        "Built from every change, before a release",
+        "flask",
+        7,
+        None,
+        texts(&[("ask", "Ask"), ("always", "Always"), ("never", "Never")], &config.previews),
+    );
     let (choices, current) = on_off(crate::autostart::enabled());
     list.push(Setting {
         key: "login",

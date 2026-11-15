@@ -1,87 +1,62 @@
 name: Release
 
-# Push a tag like v0.2.0 (matching Cargo.toml's version) to build every system and publish a
-# release. Tendril's updater reads the newest release and the bare binaries attached to it.
+# `bun run bump patch|minor|major --push` sets the version, commits, and pushes a tag like v0.2.0,
+# which starts this. It builds every system (build.yml), writes the notes and publishes the
+# release that Tendril's updater offers. Nightlies are published by check.yml instead.
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*.*.*"
+      - "!v*-*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          # 22.04 for an older glibc, so the build runs on more distributions.
-          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, name: tendril-linux-x86_64 }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: tendril-windows-x86_64.exe }
-          - { os: macos-latest, target: aarch64-apple-darwin, name: tendril-macos-aarch64 }
-          - { os: macos-latest, target: x86_64-apple-darwin, name: tendril-macos-x86_64 }
-    runs-on: ${{ matrix.os }}
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - name: The tag matches Cargo.toml
-        shell: bash
+      - uses: actions/checkout@v5
+      - id: version
+        name: The tag matches Cargo.toml
         run: |
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME doesn't match Cargo.toml's $version"; exit 1; }
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig-dev libxkbcommon-dev
-      - run: cargo build --release --locked --target ${{ matrix.target }}
-      - name: Package
-        shell: bash
-        run: |
-          set -eu
-          version=${GITHUB_REF_NAME#v}
-          out=target/${{ matrix.target }}/release
-          mkdir -p dist
-          case "${{ runner.os }}" in
-            Linux)
-              cp "$out/tendril" "dist/${{ matrix.name }}"
-              mkdir -p "pkg/tendril-$version"
-              cp "$out/tendril" packaging/tendril.desktop packaging/install.sh assets/tendril.svg README.md LICENSE "pkg/tendril-$version/"
-              tar -C pkg -czf "dist/tendril-$version-linux-x86_64.tar.gz" "tendril-$version"
-              ;;
-            Windows)
-              cp "$out/tendril.exe" "dist/${{ matrix.name }}"
-              mkdir -p "pkg/tendril-$version"
-              cp "$out/tendril.exe" README.md LICENSE "pkg/tendril-$version/"
-              (cd pkg && 7z a "../dist/tendril-$version-windows-x86_64.zip" "tendril-$version")
-              ;;
-            macOS)
-              arch=${{ matrix.target }}; arch=${arch%%-*}
-              cp "$out/tendril" "dist/${{ matrix.name }}"
-              app=pkg/Tendril.app/Contents
-              mkdir -p "$app/MacOS" "$app/Resources"
-              cp "$out/tendril" "$app/MacOS/tendril"
-              cp assets/tendril.icns "$app/Resources/tendril.icns"
-              sed "s/VERSION/$version/g" packaging/Info.plist > "$app/Info.plist"
-              # Not signed: the first open needs right-click → Open, or System Settings → Privacy & Security.
-              (cd pkg && ditto -c -k --keepParent Tendril.app "../dist/tendril-$version-macos-$arch.zip")
-              ;;
-          esac
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.name }}
-          path: dist/*
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml's $version. Use bun run bump."; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: verify
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.verify.outputs.version }}
 
   publish:
-    needs: build
+    needs: [verify, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+        with:
+          # Notes count from the previous release's tag.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          generate_release_notes: true
+      - name: Release notes
+        run: |
+          bun scripts/release.ts notes --tag "$GITHUB_REF_NAME" --ref "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --output notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest \
+            --title "Tendril ${{ needs.verify.outputs.version }}" --notes-file notes.md

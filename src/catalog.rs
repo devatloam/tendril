@@ -61,6 +61,8 @@ pub enum Run {
     /// Puts this in the search field, for a quicklink that wants text after its keyword.
     Prefill(String),
     InstallUpdate,
+    /// Switches to preview versions and installs the newest.
+    InstallPreview,
     RestartToUpdate,
     Quit,
 }
@@ -107,6 +109,7 @@ impl Item {
             Run::Setting(_) => "Change",
             Run::Shortcut => "Press New Keys",
             Run::InstallUpdate => "Update",
+            Run::InstallPreview => "Install Preview",
             Run::Path(_, true) => "Open Folder",
             Run::Path(_, false) => "Open File",
             Run::Prefill(_) => "Type Text",

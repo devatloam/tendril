@@ -1,0 +1,11 @@
+{
+  "name": "tendril-scripts",
+  "private": true,
+  "description": "Release scripts for Tendril. The app itself is Rust; these need only Bun and git.",
+  "type": "module",
+  "scripts": {
+    "bump": "bun scripts/release.ts bump",
+    "release-notes": "bun scripts/release.ts notes",
+    "test": "bun test scripts"
+  }
+}

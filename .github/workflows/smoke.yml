@@ -36,7 +36,9 @@ jobs:
           choco install innosetup --no-progress -y | Out-Null
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp packaging\tendril.iss
           $setup = Get-ChildItem dist\*-setup.exe | Select-Object -First 1
-          Start-Process $setup.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/TASKS=login" -Wait
+          # Wait for the setup alone: -Wait also waits for anything it started, and Tendril keeps running.
+          $p = Start-Process $setup.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/TASKS=login" -PassThru
+          if (-not $p.WaitForExit(180000)) { "install: setup still running after 3 minutes" | Write-Host; $p.Kill() }
           Get-Process tendril -ErrorAction SilentlyContinue | Stop-Process
           $exe = "$env:LOCALAPPDATA\Programs\Tendril\tendril.exe"
           $menu = Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Tendril.lnk"

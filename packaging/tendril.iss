@@ -50,7 +50,8 @@ Name: "{userprograms}\Tendril"; Filename: "{app}\tendril.exe"; Comment: "A keybo
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Tendril"; ValueData: """{app}\tendril.exe"" --hidden"; Tasks: login
 
 [Run]
-Filename: "{app}\tendril.exe"; Description: "Open Tendril"; Flags: nowait postinstall
+; Not in a silent install: whatever ran it (a script, a deployment tool) decides when Tendril starts.
+Filename: "{app}\tendril.exe"; Description: "Open Tendril"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 ; Stop it, and forget the start at sign-in however it was set (here or in Tendril's settings).

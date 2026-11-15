@@ -111,6 +111,15 @@ pub fn settings(config: &Config) -> Vec<Setting> {
     add("quick_keys", "Quick keys", "Ctrl 1 to 9 open the first nine", "number", 7, Some("appearance"), on_off(a.quick_keys));
     add("headings", "Headings", "Above each group in the list", "heading", 7, Some("appearance"), on_off(a.headings));
     add("hide_on_blur", "Close on click away", "When you click another window", "pointer", 7, None, on_off(config.hide_on_blur));
+    add(
+        "updates",
+        "Updates",
+        "New versions from GitHub",
+        "download",
+        7,
+        None,
+        texts(&[("auto", "Automatic"), ("notify", "Tell me"), ("off", "Off")], &config.updates),
+    );
     let (choices, current) = on_off(crate::autostart::enabled());
     list.push(Setting {
         key: "login",

@@ -14,8 +14,12 @@ pub struct Config {
     pub hide_on_blur: bool,
     /// Set once the first-run walkthrough is done or skipped.
     pub onboarded: bool,
+    /// "auto" installs new versions, "notify" offers them, "off" never asks GitHub.
+    pub updates: String,
     pub appearance: Appearance,
     pub search: Vec<Engine>,
+    /// Your own links, [[quicklink]] in the file.
+    pub quicklink: Vec<Quicklink>,
 }
 
 #[derive(Deserialize, Clone, PartialEq)]
@@ -89,6 +93,23 @@ impl Appearance {
     }
 }
 
+/// A link of your own: found by name, or opened with what you type after its keyword.
+#[derive(Deserialize, Clone)]
+pub struct Quicklink {
+    pub name: String,
+    #[serde(default)]
+    pub keyword: String,
+    /// `{query}` is what's typed after the keyword, made safe for a URL; `{raw}` is it as typed.
+    /// A path or folder works as well as a web address.
+    pub url: String,
+}
+
+impl Quicklink {
+    pub fn takes_text(&self) -> bool {
+        self.url.contains("{query}") || self.url.contains("{raw}")
+    }
+}
+
 #[derive(Deserialize, Clone)]
 pub struct Engine {
     pub name: String,
@@ -104,11 +125,13 @@ impl Default for Config {
             light_theme: "paper".into(),
             hide_on_blur: true,
             onboarded: false,
+            updates: "auto".into(),
             appearance: Appearance::default(),
             search: vec![
                 Engine { name: "Google".into(), url: "https://www.google.com/search?q={query}".into() },
                 Engine { name: "DuckDuckGo".into(), url: "https://duckduckgo.com/?q={query}".into() },
             ],
+            quicklink: vec![Quicklink { name: "GitHub repository".into(), keyword: "gh".into(), url: "https://github.com/{raw}".into() }],
         }
     }
 }
@@ -131,6 +154,11 @@ hide_on_blur = true
 
 # Set once you've been through the first-run walkthrough ("Set Up Tendril" runs it again).
 onboarded = false
+
+# New versions: "auto" downloads and installs them (used from the next start), "notify" only
+# offers them, "off" never asks. Checking is the one thing Tendril sends anywhere: a request to
+# GitHub for the latest release, every six hours while it runs.
+updates = "auto"
 
 [appearance]
 # See through the window, with what's behind it blurred. On Linux under X11 this costs nothing
@@ -167,6 +195,14 @@ url = "https://www.google.com/search?q={query}"
 [[search]]
 name = "DuckDuckGo"
 url = "https://duckduckgo.com/?q={query}"
+
+# Your own links. Type the keyword, a space and some text: {query} is that text made safe for a
+# web address, {raw} is it as typed. A link with neither is a bookmark you find by its name.
+# Folders and files work too: url = "~/Projects".
+[[quicklink]]
+name = "GitHub repository"
+keyword = "gh"
+url = "https://github.com/{raw}"
 "#;
 
 /// The commented file, with this system's own default blur style.

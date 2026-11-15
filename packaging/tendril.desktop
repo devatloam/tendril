@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Tendril
+GenericName=Launcher
+Comment=A keyboard launcher: apps, sums and commands
+Exec=tendril
+Icon=tendril
+Terminal=false
+Categories=Utility;
+Keywords=launcher;search;run;
+StartupWMClass=tendril

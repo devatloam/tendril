@@ -12,8 +12,10 @@ mod hotkey;
 mod icons;
 mod ipc;
 mod palettes;
+mod paths;
 mod search;
 mod system;
+mod update;
 mod usage;
 mod window;
 
@@ -115,6 +117,7 @@ fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::E
     let hotkeys = hotkey::Hotkeys::new();
     hotkeys.set(&app.config.borrow().hotkey);
     app.set_hotkeys(hotkeys);
+    app.start_update_checks();
 
     ipc::listen(|word| {
         let _ = slint::invoke_from_event_loop(move || {

@@ -42,6 +42,8 @@ Settings live in config.toml; \"Tendril Settings\" opens it.
 ";
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    log_to_file();
     let mut start_hidden = false;
     let mut appearance = false;
     for arg in std::env::args().skip(1) {
@@ -106,6 +108,26 @@ fn main() -> ExitCode {
             eprintln!("tendril: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// A Windows app has no console, so what Tendril says on stderr (a hotkey another app holds, an
+/// update that failed) would go nowhere. It goes to %LOCALAPPDATA%\tendril\tendril.log instead,
+/// started fresh each run so it stays small.
+#[cfg(windows)]
+fn log_to_file() {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Console::{STD_ERROR_HANDLE, SetStdHandle};
+    let Some(dir) = dirs::data_local_dir().map(|d| d.join("tendril")) else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(file) = std::fs::File::create(dir.join("tendril.log")) {
+        unsafe {
+            let _ = SetStdHandle(STD_ERROR_HANDLE, HANDLE(file.as_raw_handle()));
+        }
+        // Kept open for as long as Tendril runs.
+        std::mem::forget(file);
+        eprintln!("tendril {} started", update::VERSION);
     }
 }
 

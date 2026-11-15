@@ -1,0 +1,47 @@
+name: Smoke
+
+# Runs Tendril on a real Windows desktop and drives it like a person (scripts/smoke.ps1): first
+# start, recording a shortcut, typing fast, clicking away, the shortcut, starting it again,
+# clipboard history. Screenshots and a report go to the smoke-results branch, so they can be read
+# without downloading anything: raw.githubusercontent.com/devatloam/tendril/smoke-results/smoke/report.txt
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["src/**", "ui/**", "Cargo.toml", "Cargo.lock", "scripts/smoke.ps1"]
+
+concurrency:
+  group: smoke
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    if: github.repository == 'devatloam/tendril'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Drive it
+        shell: pwsh
+        run: ./scripts/smoke.ps1 -Exe target\release\tendril.exe -Out smoke
+      - name: Keep the results
+        if: always()
+        shell: bash
+        run: |
+          cat smoke/report.txt || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p /tmp/results && cp -r smoke /tmp/results/
+          git checkout --orphan smoke-results
+          git rm -rf --quiet --cached .
+          git clean -fdq -e target
+          cp -r /tmp/results/smoke .
+          echo "From $GITHUB_SHA, run $GITHUB_RUN_ID" > smoke/commit.txt
+          git add smoke
+          git commit -qm "Smoke test of $GITHUB_SHA"
+          git push -f origin smoke-results

@@ -797,17 +797,11 @@ export component SettingsWindow inherits Window {
                                 HorizontalLayout {
                                     spacing: 16px;
                                     alignment: start;
-                                    Rectangle {
-                                        width: 64px;
-                                        height: 64px;
-                                        border-radius: 15px;
-                                        background: Theme.highlight;
-                                        Image {
-                                            width: 38px;
-                                            height: 38px;
-                                            source: @image-url("icons/tendril-solid.svg");
-                                            colorize: #ffffff;
-                                        }
+                                    // The mark, drawn from its SVG so it's sharp at any scale.
+                                    Image {
+                                        width: 72px;
+                                        height: 72px;
+                                        source: @image-url("../assets/tendril.svg");
                                     }
 
                                     VerticalLayout {

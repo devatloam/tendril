@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="assets/tendril.svg" width="88" height="88" alt="Tendril's mark" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wordmark-dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/brand/wordmark-light.png" />
+    <img src="docs/brand/wordmark-dark.png" width="420" alt="Tendril" />
+  </picture>
 </p>
-
-<h1 align="center">Tendril</h1>
 
 <p align="center">A keyboard launcher for Windows, Linux and macOS. Native, light, and quiet.</p>
 
@@ -346,7 +348,7 @@ src/
 fonts/           Geist (SIL Open Font License)
 assets/          Tendril's app icon, as SVG, PNG, ICO and ICNS
 packaging/       what goes into a release besides the binary: the Linux menu entry and installer, the macOS Info.plist
-scripts/         icons.py draws ui/icons/; release.ts versions, bumps and writes release notes (bun run bump)
+scripts/         icons.py draws ui/icons/; mark.py draws the mark and the app icons; release.ts versions, bumps and writes release notes (bun run bump)
 .github/         check.yml on every push; nightly.yml once a night; release.yml on a version tag or by hand; build.yml for both
 ```
 
@@ -372,6 +374,17 @@ icons read from `.icns` files.
 
 Switch Windows works on X11 and Windows. Not done yet: file search beyond typing a path, snippets, extensions, a tray
 icon on Linux and macOS, switching windows on macOS.
+
+## The mark
+
+The launcher as a layered object: the search field on top, carrying the tendril, and its results stacked beneath.
+Blue and white; Advantis' pink and cream is its other colourway (`assets/tendril-pink.svg`,
+`docs/brand/wordmark-pink-*.png`). `scripts/mark.py` draws all of it, the app icons included, from one description.
+
+| Blue | Pink and cream |
+| --- | --- |
+| <img src="docs/brand/wordmark-dark.png" width="320" alt="Tendril in blue and white" /> | <img src="docs/brand/wordmark-pink-dark.png" width="320" alt="Tendril in pink and cream" /> |
+| <img src="docs/brand/wordmark-light.png" width="320" alt="Tendril in blue, dark text" /> | <img src="docs/brand/wordmark-pink-light.png" width="320" alt="Tendril in pink on cream" /> |
 
 ## Licence
 

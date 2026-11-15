@@ -11,6 +11,7 @@ cargo test                     # unit tests live beside the code, in #[cfg(test)
 cargo clippy --all-targets     # CI runs it with -D warnings, on Linux, Windows and macOS
 cargo fmt                      # rustfmt.toml: 140 columns
 python3 scripts/icons.py       # redraws ui/icons/ from the descriptions in that script
+python3 scripts/mark.py        # redraws the mark: assets/ (svg, png, ico, icns) and docs/brand/; needs Inkscape
 bun test scripts               # the release script's tests (Bun only, no install step)
 ```
 
@@ -64,6 +65,8 @@ Windows and macOS can be checked from Linux: `rustup target add x86_64-pc-window
   renderer doesn't round gradients. Gradients belong behind `Theme.modern`, which is only true on the GPU renderer.
 - Icons are drawn on Lucide's 24 grid with an outline and a solid for the selected row. Add one by describing it in
   `scripts/icons.py`, running it, and listing it in `src/icons.rs`.
+- The mark (assets/tendril.svg) is blue and white only; pink and cream is its other colourway. Change it in
+  `scripts/mark.py`, never by hand, so the icons in every format stay the same drawing.
 - Write like Blight: plain words from the user's side, short sentences, no marketing. Comments say why, not what.
   No AI features.
 

@@ -86,8 +86,11 @@ pub fn attributes(attrs: WindowAttributes) -> WindowAttributes {
 /// Hides the window when it loses focus, if config.toml says to.
 pub fn watch(ui: &Launcher) {
     ui.window().on_winit_window_event(|_, event| {
-        if let winit::event::WindowEvent::Focused(false) = event {
-            slint::Timer::single_shot(Duration::ZERO, clicked_away);
+        if let winit::event::WindowEvent::Focused(focused) = event {
+            eprintln!("tendril: window focused: {focused}");
+            if !focused {
+                slint::Timer::single_shot(Duration::ZERO, clicked_away);
+            }
         }
         EventResult::Propagate
     });
@@ -109,12 +112,12 @@ pub fn watch(ui: &Launcher) {
 fn clicked_away() {
     with_app(|app| {
         let settled = app.shown_at.get().is_some_and(|t| t.elapsed() > SETTLE);
-        if app.config.borrow().hide_on_blur
-            && settled
-            && let Some(ui) = app.ui.upgrade()
-            && ui.window().is_visible()
-        {
+        let Some(ui) = app.ui.upgrade() else { return };
+        let (setting, visible) = (app.config.borrow().hide_on_blur, ui.window().is_visible());
+        if setting && settled && visible {
             hide(&ui);
+        } else if visible {
+            eprintln!("tendril: another window came forward; staying (close on click away: {setting}, open long enough: {settled})");
         }
     });
 }
@@ -139,6 +142,7 @@ mod foreground {
         let mut pid = 0u32;
         unsafe { GetWindowThreadProcessId(window, Some(&mut pid)) };
         if pid != 0 && pid != std::process::id() {
+            eprintln!("tendril: another app came to the front");
             slint::Timer::single_shot(std::time::Duration::ZERO, super::clicked_away);
         }
     }

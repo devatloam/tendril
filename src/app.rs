@@ -864,6 +864,16 @@ impl App {
 
     /// Rebuilds the list. `keep` is a row id to stay on, if it's still there.
     fn refresh_keeping(&self, query: &str, keep: Option<&str>) {
+        let started = Instant::now();
+        self.build_list(query, keep);
+        let took = started.elapsed();
+        // Typing should never wait on this; say so when it does.
+        if took > Duration::from_millis(8) {
+            eprintln!("tendril: listing \"{query}\" took {} ms", took.as_millis());
+        }
+    }
+
+    fn build_list(&self, query: &str, keep: Option<&str>) {
         let Some(ui) = self.ui.upgrade() else { return };
         let config = self.config.borrow().clone();
         let a = &config.appearance;

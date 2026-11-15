@@ -43,8 +43,6 @@ Settings live in config.toml; \"Tendril Settings\" opens it.
 ";
 
 fn main() -> ExitCode {
-    #[cfg(windows)]
-    log_to_file();
     let mut start_hidden = false;
     let mut appearance = false;
     for arg in std::env::args().skip(1) {
@@ -138,6 +136,10 @@ fn log_to_file() {
 }
 
 fn run(start_hidden: bool, appearance: bool) -> Result<(), Box<dyn std::error::Error>> {
+    // Only the Tendril that stays running writes the log; one that hands over to it and leaves
+    // would start the file afresh under it.
+    #[cfg(windows)]
+    log_to_file();
     let config = config::load();
     select_backend(window::wants_gpu(&config.appearance))?;
     let ui = Launcher::new()?;

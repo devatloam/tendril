@@ -110,6 +110,7 @@ $text = "visual studio code"
 $sw.Restart()
 foreach ($c in $text.ToCharArray()) { Keys ([string]$c); Start-Sleep -Milliseconds 15 }
 $typed = $sw.ElapsedMilliseconds
+Shot "05a-right-after-typing"
 $caught = WaitFor { (FieldText) -eq $text } 5000
 Note "typing: sent '$text' in $typed ms; field caught up $caught ms after the last key (-1 = never; field reads '$(FieldText)')"
 Shot "05-typed"

@@ -136,8 +136,8 @@ pub fn icon(parsing_name: &str) -> Option<(u32, u32, Vec<u8>)> {
             return None;
         }
         // BGRA to RGBA. Old icons without an alpha channel come back fully transparent; make them opaque.
-        let opaque = pixels.chunks_exact(4).all(|p| p[3] == 0);
-        for p in pixels.chunks_exact_mut(4) {
+        let opaque = pixels.as_chunks::<4>().0.iter().all(|p| p[3] == 0);
+        for p in pixels.as_chunks_mut::<4>().0 {
             p.swap(0, 2);
             if opaque {
                 p[3] = 255;

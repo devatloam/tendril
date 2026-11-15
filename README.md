@@ -201,8 +201,8 @@ or ← →, shows straight away and is saved to config.toml:
 | Blur | See through the window, softened by the system |
 | Blur type | Windows: Acrylic (blurs what's behind), Mica and Mica Alt (tinted by your wallpaper, Windows 11), Blur (Windows 10). macOS: HUD, Popover, Sidebar, Menu, Under window. Not on Linux, where the compositor decides |
 | Opacity | 60 to 100%, while blurred |
-| Glow | Still, drifting, or off |
-| Gradient line | Under the search field |
+| Glow | Still, drifting, or off. Off to start with on Windows |
+| Gradient line | Under the search field. Off to start with on Windows, which has its own look |
 | Size | Regular, or compact: narrower, shorter rows, as tall as its results, no bottom bar |
 | Details pane | The selected item's details beside the list |
 | Favourites | A grid of tiles, or a list |

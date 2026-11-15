@@ -68,8 +68,8 @@ impl Default for Appearance {
             blur: !crate::window::needs_gpu_for_blur(),
             blur_style: default_blur_style().into(),
             opacity: 0.78,
-            glow: "still".into(),
-            gradient_divider: true,
+            glow: if touches_by_default() { "still" } else { "off" }.into(),
+            gradient_divider: touches_by_default(),
             size: "regular".into(),
             details: false,
             favourites: "grid".into(),
@@ -247,18 +247,26 @@ url = "https://github.com/{raw}"
 
 /// The commented file, with this system's own default blur style.
 fn template() -> String {
-    template_for(default_blur_style(), Appearance::default().blur)
+    template_for(default_blur_style(), Appearance::default().blur, touches_by_default())
 }
 
 /// The file with this system's defaults filled in. Whole lines only: `blur = true` is also the
 /// end of `hide_on_blur = true`, and replacing that too turned closing on click-away off for
 /// everyone on Windows and macOS in 0.1.0 and 0.1.1.
-fn template_for(blur_style: &str, blur: bool) -> String {
+/// Blight's glow and gradient line start on, except on Windows, where Tendril follows Windows'
+/// own design and they'd be out of place. They're a switch away in Appearance.
+fn touches_by_default() -> bool {
+    !cfg!(windows)
+}
+
+fn template_for(blur_style: &str, blur: bool, touches: bool) -> String {
     TEMPLATE
         .lines()
         .map(|line| match line {
             "blur_style = \"acrylic\"" => format!("blur_style = \"{blur_style}\""),
             "blur = true" => format!("blur = {blur}"),
+            "glow = \"still\"" if !touches => "glow = \"off\"".to_string(),
+            "gradient_divider = true" if !touches => "gradient_divider = false".to_string(),
             other => other.to_string(),
         })
         .collect::<Vec<_>>()
@@ -471,11 +479,21 @@ mod tests {
     #[test]
     fn blur_off_leaves_click_away_on() {
         for blur in [true, false] {
-            let config: Config = toml::from_str(&template_for("mica", blur)).unwrap();
+            let config: Config = toml::from_str(&template_for("mica", blur, true)).unwrap();
             assert!(config.hide_on_blur, "closing on click-away stays on with blur {blur}");
             assert_eq!(config.appearance.blur, blur);
             assert_eq!(config.appearance.blur_style, "mica");
         }
+    }
+
+    #[test]
+    fn touches_off_where_asked() {
+        let config: Config = toml::from_str(&template_for("mica", false, false)).unwrap();
+        assert_eq!(config.appearance.glow, "off");
+        assert!(!config.appearance.gradient_divider);
+        let config: Config = toml::from_str(&template_for("mica", false, true)).unwrap();
+        assert_eq!(config.appearance.glow, "still");
+        assert!(config.appearance.gradient_divider);
     }
 
     #[test]

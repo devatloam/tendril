@@ -173,8 +173,7 @@ pub fn settings(config: &Config) -> Vec<Setting> {
         texts(&[("ask", "Ask"), ("always", "Always"), ("never", "Never")], &config.previews),
     );
     let f = &config.files;
-    let status = crate::files::status();
-    add("index", "File search", &status, "folder", 7, Some("files"), on_off(f.index));
+    add("index", "File search", "Find files and folders by name as you type", "folder", 7, Some("files"), on_off(f.index));
     add("hidden", "Hidden files", "Names starting with a dot, like .config", "file", 7, Some("files"), on_off(f.hidden));
     add("gitignore", "Respect .gitignore", "Skip what a folder's .gitignore lists", "file", 7, Some("files"), on_off(f.gitignore));
     let (choices, current) = on_off(crate::autostart::enabled());

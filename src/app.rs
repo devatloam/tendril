@@ -723,6 +723,7 @@ impl App {
     /// A few times a second while the walk runs: the count, where it's shown.
     fn files_progress(&self) {
         self.set_busy(true);
+        crate::settings::show_files_status();
         let showing = self.items.borrow().iter().flatten().any(|i| matches!(i.run, Run::IndexFiles | Run::Setting("index")));
         if showing && let Some(ui) = self.ui.upgrade() {
             let keep = self.selected_item().map(|i| i.id);
@@ -734,6 +735,10 @@ impl App {
         let count = index.len();
         *self.files.borrow_mut() = index;
         self.set_busy(false);
+        // The rules changed while it walked (in Settings, say): walk again with the new ones.
+        if self.indexed_with.borrow().as_ref() != Some(&self.config.borrow().files) {
+            self.index_files(false);
+        }
         crate::settings::refresh();
         if let Some(ui) = self.ui.upgrade() {
             let keep = self.selected_item().map(|i| i.id);

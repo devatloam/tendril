@@ -392,12 +392,15 @@ pub enum Value<'a> {
     Text(&'a str),
     Bool(bool),
     Number(f32),
+    /// A list of text, written on one line: ["a", "b"].
+    List(&'a [String]),
 }
 
 impl Value<'_> {
     fn literal(&self) -> String {
         match self {
             Value::Text(t) => format!("\"{}\"", t.replace('\\', "\\\\").replace('"', "\\\"")),
+            Value::List(items) => format!("[{}]", items.iter().map(|i| Value::Text(i).literal()).collect::<Vec<_>>().join(", ")),
             Value::Bool(b) => b.to_string(),
             Value::Number(n) => format!("{:.2}", n).trim_end_matches('0').trim_end_matches('.').to_string(),
         }
@@ -482,6 +485,14 @@ fn with(text: &str, section: Option<&str>, key: &str, literal: &str) -> String {
         Some(start) => {
             let end = lines[start..].iter().position(|l| is_header(l)).map_or(lines.len(), |i| start + i);
             if let Some(i) = (start..end).find(|&i| is_key(&lines[i])) {
+                // A list written over several lines by hand goes, all of it, up to its "]".
+                let value = lines[i].split_once('=').map_or("", |(_, v)| v).trim();
+                if value.starts_with('[') && !value.contains(']') {
+                    let close = (i + 1..end).find(|&j| lines[j].contains(']'));
+                    if let Some(close) = close {
+                        lines.drain(i + 1..=close);
+                    }
+                }
                 lines[i] = line;
             } else {
                 // After the section's last setting, so it doesn't land below a blank line or a
@@ -580,6 +591,22 @@ mod tests {
         assert!(config.appearance.details && !config.appearance.blur);
         let text = with("theme = \"ember\"\n", Some("appearance"), "blur", "false");
         assert!(!toml::from_str::<Config>(&text).unwrap().appearance.blur);
+    }
+
+    #[test]
+    fn sets_lists() {
+        let folders = vec!["~/Projects".to_string(), "D:\\Work".to_string()];
+        let text = with(TEMPLATE, Some("files"), "folders", &Value::List(&folders).literal());
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(config.files.folders, folders);
+        assert_eq!(text.lines().count(), TEMPLATE.lines().count());
+
+        // Written over several lines by hand: replaced whole.
+        let by_hand = "[files]\nexclude = [\n  \"a\",\n  \"b\",\n]\nhidden = true\n";
+        let text = with(by_hand, Some("files"), "exclude", &Value::List(&["c".to_string()]).literal());
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(config.files.exclude, ["c"]);
+        assert!(config.files.hidden);
     }
 
     #[test]

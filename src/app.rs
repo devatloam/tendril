@@ -31,6 +31,8 @@ pub fn with_app(f: impl FnOnce(&Rc<App>)) {
 const KEEP_VIEW: Duration = Duration::from_secs(90);
 /// Apps are looked for again on opening, at most this often.
 const RESCAN_AFTER: Duration = Duration::from_secs(120);
+/// How many files the Files view lists.
+const ALL_FILES: usize = 200;
 /// Files are looked through again on opening, at most this often.
 const REINDEX_AFTER: Duration = Duration::from_secs(20 * 60);
 /// The least time the "looking for apps" shapes stay up.
@@ -60,6 +62,8 @@ pub enum View {
     Windows,
     /// Typing a word for something (Set Alias in its actions).
     Alias,
+    /// Every file matching what's typed, not only the first few.
+    Files,
 }
 
 /// Where an update stands.
@@ -106,9 +110,9 @@ pub struct App {
     /// Looks through iles on its own thread as you type.
     finder: crate::files::Finder,
     /// The last files found, and what was typed for them.
-    found_files: RefCell<(String, Vec<Item>)>,
+    found_files: RefCell<Option<crate::files::Found>>,
     /// What file search was last asked for, so it's asked once per thing typed.
-    asked_files: RefCell<String>,
+    asked_files: RefCell<(String, usize)>,
     /// The [files] rules the last walk used, and when it started: a change to them, or enough
     /// time, means walking again.
     indexed_with: RefCell<Option<config::Files>>,
@@ -154,6 +158,8 @@ pub struct App {
     recall: Cell<Option<usize>>,
     /// What an alias is being typed for, in the Set Alias view.
     aliasing: RefCell<Option<Item>>,
+    /// config.toml as it was when last read, to tell on opening whether it needs reading again.
+    config_stamp: Cell<Option<config::Stamp>>,
 }
 
 /// Something the actions panel can do with the selected item.
@@ -211,7 +217,7 @@ impl App {
             scanned_at: Cell::new(None),
             scanning: Cell::new(false),
             files: RefCell::default(),
-            finder: crate::files::Finder::new(|query, items| with_app(|a| a.files_found(query, items))),
+            finder: crate::files::Finder::new(|found| with_app(|a| a.files_found(found))),
             found_files: RefCell::default(),
             asked_files: RefCell::default(),
             indexed_with: RefCell::new(None),
@@ -238,6 +244,7 @@ impl App {
             searches: RefCell::default(),
             recall: Cell::new(None),
             aliasing: RefCell::new(None),
+            config_stamp: Cell::new(None),
         });
         APP.with_borrow_mut(|a| *a = Some(app.clone()));
         app.wire(ui);
@@ -258,6 +265,23 @@ impl App {
         ui.on_move(|d| with_app(|a| a.move_by(d)));
         ui.on_hover(|i, x, y| with_app(|a| a.hover(i, x, y)));
         ui.on_activate(|i, alt| with_app(|a| a.activate(i, alt)));
+        ui.on_complete(|| {
+            let mut done = false;
+            with_app(|a| done = a.complete());
+            done
+        });
+        ui.on_context(|i| {
+            with_app(|a| {
+                let Some(ui) = a.ui.upgrade() else { return };
+                if ui.get_actions_open() {
+                    a.toggle_actions();
+                }
+                a.select(i, false);
+                if ui.get_selected() == i {
+                    a.toggle_actions();
+                }
+            })
+        });
         ui.on_escape(|| with_app(|a| a.escape()));
         ui.on_back(|| {
             let mut left = false;
@@ -337,11 +361,13 @@ impl App {
 
     fn set_context(&self, ui: &Launcher) {
         let (icon, title, placeholder) = match self.view.get() {
+            View::Root if self.config.borrow().files.index => ("tendril", "Tendril", "Search apps, files and commands…"),
             View::Root => ("tendril", "Tendril", "Search for apps and commands…"),
             View::Appearance => ("palette", "Appearance", "Search settings…"),
             View::Clipboard => ("clipboard", "Clipboard History", "Search what you've copied…"),
             View::Windows => ("windows", "Switch Windows", "Search open windows…"),
             View::Alias => ("link", "Set Alias", "Type a short word…"),
+            View::Files => ("folder", "Files", "Search files…"),
         };
         ui.set_context_icon(self.icons.borrow_mut().builtin_solid(icon));
         // Blue: Tendril's one colour, as blue leads on Blight's dashboard.
@@ -418,21 +444,29 @@ impl App {
     /// Called when the window is about to open.
     pub fn opening(&self) {
         let Some(ui) = self.ui.upgrade() else { return };
-        *self.config.borrow_mut() = config::load();
-        self.rebuild_catalog();
-        self.start_update_checks();
-        self.start_clipboard();
+        let started = Instant::now();
+        // config.toml read, and everything made from it rebuilt, only when the file changed since
+        // (by hand, say): opening is the moment someone's waiting.
+        let stamp = config::stamp();
+        if stamp.is_none() || stamp != self.config_stamp.get() {
+            *self.config.borrow_mut() = config::load();
+            self.config_stamp.set(config::stamp());
+            self.rebuild_catalog();
+            self.start_update_checks();
+            self.start_clipboard();
+            if let Some(hotkeys) = &*self.hotkeys.borrow() {
+                hotkeys.set(&self.config.borrow().hotkey);
+            }
+            self.apply_appearance();
+        }
+        // Light or dark may have changed while closed, with no window to hear it.
+        self.apply_theme();
         if !self.clipboard_watched.get()
             && let Some(text) = clipboard::read()
         {
             self.copied(text);
         }
-        if let Some(hotkeys) = &*self.hotkeys.borrow() {
-            hotkeys.set(&self.config.borrow().hotkey);
-        }
         let refused = self.hotkeys.borrow().as_ref().and_then(|h| h.refused());
-        self.apply_theme();
-        self.apply_appearance();
         self.icons.borrow_mut().set_scale(ui.window().scale_factor());
         self.pointer.set(None);
         let stale = self.hidden_at.get().is_none_or(|t| t.elapsed() > KEEP_VIEW);
@@ -458,6 +492,11 @@ impl App {
             return;
         }
         self.refresh(&ui.get_query());
+        // Slower than a frame is worth knowing about.
+        let took = started.elapsed();
+        if took > Duration::from_millis(16) {
+            eprintln!("tendril: getting ready to open took {} ms", took.as_millis());
+        }
         if let Some(keys) = refused {
             self.toast(
                 &format!(
@@ -682,7 +721,8 @@ impl App {
                 with_app(|a| {
                     a.rebuild_catalog();
                     if let Some(ui) = a.ui.upgrade() {
-                        a.refresh_keeping(&ui.get_query(), None);
+                        let keep = a.selected_item().map(|i| i.id);
+                        a.refresh_keeping(&ui.get_query(), keep.as_deref());
                     }
                 })
             });
@@ -831,35 +871,61 @@ impl App {
     /// Files for what's typed: what the file search thread found for it, or, until it says, what
     /// it found for the start of it (one letter fewer, usually), so the list doesn't jump about.
     /// Asks the thread the first time each thing is typed.
-    fn files_for(&self, query: &str) -> Vec<Item> {
+    /// `limit` is how many the list has room for: a few under Files, more in the Files view.
+    /// Also says how many matched in all.
+    /// None until the thread has answered for this.
+    fn files_for(&self, query: &str, limit: usize) -> Option<(Vec<Item>, usize)> {
         let query = query.trim();
         if query.chars().count() < 2 || crate::paths::is_path(query) || self.files.borrow().len() == 0 {
-            return Vec::new();
+            return Some((Vec::new(), 0));
         }
-        if *self.asked_files.borrow() != query {
-            *self.asked_files.borrow_mut() = query.to_string();
-            self.finder.ask(query, self.files.borrow().clone());
+        let asking = (query.to_string(), limit);
+        if *self.asked_files.borrow() != asking {
+            self.finder.ask(query, limit, self.files.borrow().clone());
+            *self.asked_files.borrow_mut() = asking;
         }
-        let found = self.found_files.borrow();
-        if query.starts_with(found.0.as_str()) && !found.0.is_empty() { found.1.clone() } else { Vec::new() }
+        match &*self.found_files.borrow() {
+            Some(f) if f.limit == limit && !f.query.is_empty() && query.starts_with(f.query.as_str()) => Some((f.items.clone(), f.total)),
+            _ => None,
+        }
     }
 
     /// Files the file search thread found. Shown if they're still for what's typed.
-    fn files_found(&self, query: String, items: Vec<Item>) {
+    fn files_found(&self, found: crate::files::Found) {
         let Some(ui) = self.ui.upgrade() else { return };
-        if ui.get_query().trim() != query || self.view.get() != View::Root {
+        let query = ui.get_query().trim().to_string();
+        if query != found.query || !matches!(self.view.get(), View::Root | View::Files) {
             return;
         }
-        *self.found_files.borrow_mut() = (query.clone(), items);
+        *self.found_files.borrow_mut() = Some(found);
         let keep = self.selected_item().map(|i| i.id);
         self.refresh_keeping(&query, keep.as_deref());
+    }
+
+    /// The Files view: every file matching what's typed, as many as fit a long list.
+    fn file_lines(&self, query: &str) -> Vec<Line> {
+        if query.trim().chars().count() < 2 {
+            return vec![Line::Empty("Type at least two letters of a file's name".into())];
+        }
+        let Some((items, total)) = self.files_for(query, ALL_FILES) else {
+            return vec![Line::Empty("Looking…".into())];
+        };
+        if items.is_empty() {
+            return vec![Line::Empty(format!("No files match “{}”", query.trim()))];
+        }
+        let heading = if total > items.len() {
+            format!("The best {} of {} files", items.len(), crate::files::thousands(total))
+        } else {
+            format!("{} files", crate::files::thousands(total))
+        };
+        std::iter::once(Line::Section(heading)).chain(items.into_iter().map(Line::Item)).collect()
     }
 
     /// Last run's index, while the walk runs. Only taken if the walk hasn't finished first.
     fn files_cached(&self, index: crate::files::Index) {
         if crate::files::walking() && self.files.borrow().len() == 0 {
             *self.files.borrow_mut() = std::sync::Arc::new(index);
-            self.asked_files.borrow_mut().clear();
+            *self.asked_files.borrow_mut() = Default::default();
             if let Some(ui) = self.ui.upgrade()
                 && !ui.get_query().is_empty()
             {
@@ -883,7 +949,7 @@ impl App {
     fn files_indexed(&self, index: crate::files::Index) {
         let count = index.len();
         *self.files.borrow_mut() = std::sync::Arc::new(index);
-        self.asked_files.borrow_mut().clear();
+        *self.asked_files.borrow_mut() = Default::default();
         self.set_busy(false);
         // The rules changed while it walked (in Settings, say): walk again with the new ones.
         if self.indexed_with.borrow().as_ref() != Some(&self.config.borrow().files.walk_rules()) {
@@ -1154,14 +1220,23 @@ impl App {
     fn scanned(&self, mut found: Vec<Item>, tell: bool) {
         let count = found.len();
         found.sort_by_key(|a| a.title.to_lowercase());
-        *self.apps.borrow_mut() = found;
-        self.rebuild_catalog();
+        // Usually nothing was installed or removed: then the list stays as it is, rather than
+        // being rebuilt under you a second after opening.
+        let same = {
+            let apps = self.apps.borrow();
+            apps.len() == found.len() && apps.iter().zip(&found).all(|(a, b)| a.id == b.id && a.title == b.title)
+        };
         self.scanning.set(false);
         self.set_busy(false);
         self.app_count.set(count);
         self.scanned_at.set(Some(Instant::now()));
-        if let Some(ui) = self.ui.upgrade() {
-            self.refresh(&ui.get_query());
+        if !same {
+            *self.apps.borrow_mut() = found;
+            self.rebuild_catalog();
+            if let Some(ui) = self.ui.upgrade() {
+                let keep = self.selected_item().map(|i| i.id);
+                self.refresh_keeping(&ui.get_query(), keep.as_deref());
+            }
         }
         if tell {
             self.toast(&format!("Found {count} apps"), false);
@@ -1198,12 +1273,15 @@ impl App {
             self.window_lines(query)
         } else if self.view.get() == View::Alias {
             self.alias_lines(query, &config)
+        } else if self.view.get() == View::Files {
+            self.file_lines(query)
         } else {
             let mut lines = if query.trim().is_empty() { self.update_lines() } else { Vec::new() };
-            let files = self.files_for(query);
+            let (files, files_total) = self.files_for(query, crate::files::MAX_SHOWN).unwrap_or_default();
             let sources = search::Sources {
                 catalog: &self.catalog.borrow(),
                 files: &files,
+                files_total,
                 usage: &self.usage.borrow(),
                 aliases: &config.alias,
                 engines: &config.search,
@@ -1892,6 +1970,21 @@ impl App {
         }
     }
 
+    /// Tab while a path is typed, as in a terminal: the selected folder (going into it) or file
+    /// fills the field. False when there's no path, so Tab opens the actions instead.
+    fn complete(&self) -> bool {
+        let Some(ui) = self.ui.upgrade() else { return false };
+        if self.view.get() != View::Root || !crate::paths::is_path(&ui.get_query()) {
+            return false;
+        }
+        let Some(Run::Path(path, dir)) = self.selected_item().map(|i| i.run) else { return true };
+        let text = if dir { crate::paths::into(&path) } else { crate::paths::shorten_home(&path) };
+        ui.set_query(text.as_str().into());
+        ui.invoke_caret_to_end();
+        self.refresh(&text);
+        true
+    }
+
     /// Backspace with nothing typed: out of a view, back to the main list.
     fn back(&self) -> bool {
         let Some(ui) = self.ui.upgrade() else { return false };
@@ -1965,6 +2058,7 @@ impl App {
                     | Run::RestartToUpdate
                     | Run::Prefill(_)
                     | Run::SaveAlias(_)
+                    | Run::AllFiles
             )
         {
             self.usage.borrow_mut().record(&item.id, &ui.get_query());
@@ -2058,6 +2152,13 @@ impl App {
                     Ok(()) => Ok(Done::Toast("Copied. Paste it where you like.".into(), true)),
                     Err(e) => Err(e),
                 }
+            }
+            Run::AllFiles => {
+                // What's typed stays; the list just gets longer.
+                self.view.set(View::Files);
+                self.set_context(&ui);
+                self.refresh(&ui.get_query());
+                Ok(Done::Stay)
             }
             Run::SaveAlias(word) => {
                 let target = self.aliasing.borrow().clone();
@@ -2166,7 +2267,9 @@ impl App {
                 match system::trash(&path) {
                     Ok(()) => {
                         std::sync::Arc::make_mut(&mut self.files.borrow_mut()).remove(&path);
-                        self.found_files.borrow_mut().1.retain(|i| i.path.as_deref().is_none_or(|p| !p.starts_with(&path)));
+                        if let Some(found) = &mut *self.found_files.borrow_mut() {
+                            found.items.retain(|i| i.path.as_deref().is_none_or(|p| !p.starts_with(&path)));
+                        }
                         self.toast(&format!("Moved to the {}", system::trash_name()), false);
                         self.refresh(&ui.get_query());
                     }

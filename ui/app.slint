@@ -133,6 +133,10 @@ export component Launcher inherits Window {
     // moving under a still pointer.
     callback hover(int, length, length);
     callback activate(int, bool);
+    // A row right-clicked: select it and open its actions.
+    callback context(int);
+    // Tab while a path is typed: true if it filled in the selected name.
+    callback complete() -> bool;
     // Ctrl and a digit: true if it opened something.
     callback quick(string) -> bool;
     callback toggle-actions();
@@ -240,6 +244,10 @@ export component Launcher inherits Window {
                     if e.text == Key.Escape || e.text == Key.Return {
                         root.close-about();
                     }
+                    return accept;
+                }
+                // Tab while typing a path: the selected file or folder's name, filled in.
+                if e.text == Key.Tab && !e.modifiers.shift && !e.modifiers.control && !root.actions-open && root.complete() {
                     return accept;
                 }
                 // Ctrl K, or Tab, opens and closes the actions.
@@ -578,6 +586,10 @@ export component Launcher inherits Window {
                                     pointer-event(e) => {
                                         if e.kind == PointerEventKind.move && i != root.selected {
                                             root.hover(i, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                        }
+                                        // Right-click: that row's actions, as Ctrl K.
+                                        if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                                            root.context(i);
                                         }
                                     }
                                     clicked => {

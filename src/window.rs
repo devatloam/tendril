@@ -14,6 +14,9 @@ use winit::window::{WindowAttributes, WindowLevel};
 thread_local! {
     /// Where the window went last time, so the next one is made there instead of jumping.
     static PLACE: Cell<Option<(i32, i32)>> = const { Cell::new(None) };
+    /// The blur last asked for, and for which window: asked again only when it changes or the
+    /// window is a new one (on Linux and macOS it's made afresh each time it opens).
+    static BLURRED: std::cell::RefCell<Option<(winit::window::WindowId, String, bool)>> = const { std::cell::RefCell::new(None) };
     /// True while a window that isn't the launcher is being made (Settings).
     static PLAIN: Cell<bool> = const { Cell::new(false) };
 }
@@ -299,7 +302,11 @@ fn pointer() -> Option<(i32, i32)> {
 /// `blur` is the blur style when the window is see-through.
 fn put(w: &winit::window::Window, blur: Option<&str>, dark: bool) {
     if let Some(style) = blur {
-        blur_behind(w, style, dark);
+        let wanted = Some((w.id(), style.to_string(), dark));
+        if BLURRED.with_borrow(|b| *b != wanted) {
+            blur_behind(w, style, dark);
+            BLURRED.set(wanted);
+        }
     }
     {
         if let Some(monitor) = monitor_under_pointer(w).or_else(|| w.primary_monitor()).or_else(|| w.current_monitor()) {

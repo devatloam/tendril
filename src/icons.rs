@@ -56,12 +56,17 @@ const BUILTIN: &[(&str, &[u8], &[u8])] = &[
     ("pointer", include_bytes!("../ui/icons/pointer.svg"), include_bytes!("../ui/icons/pointer-solid.svg")),
     ("login", include_bytes!("../ui/icons/login.svg"), include_bytes!("../ui/icons/login-solid.svg")),
     ("wave", include_bytes!("../ui/icons/wave.svg"), include_bytes!("../ui/icons/wave-solid.svg")),
+    ("volume", include_bytes!("../ui/icons/volume.svg"), include_bytes!("../ui/icons/volume-solid.svg")),
+    ("contrast", include_bytes!("../ui/icons/contrast.svg"), include_bytes!("../ui/icons/contrast-solid.svg")),
+    ("trash", include_bytes!("../ui/icons/trash.svg"), include_bytes!("../ui/icons/trash-solid.svg")),
 ];
 
 /// Point sizes icons are shown at: a list row, a favourite tile, the details pane.
 pub const ROW: f32 = 20.0;
 pub const TILE: f32 = 40.0;
 pub const DETAIL: f32 = 56.0;
+/// The most a picture's preview in the details pane can be, either way.
+pub const PREVIEW: f32 = 200.0;
 
 /// Pixels decoded on the icon thread, waiting to become an Image on the UI thread.
 pub struct Pixels {
@@ -152,6 +157,25 @@ impl Icons {
         match loaded {
             Some(image) => (image.clone(), image, 0),
             None => (self.builtin("app"), self.builtin_solid("app"), FALLBACK_TINT),
+        }
+    }
+
+    /// A picture file at most `PREVIEW` points either way, and its size in points; None until it
+    /// arrives from the icon thread, or if it isn't a picture Tendril can read.
+    pub fn preview(&mut self, path: &Path) -> Option<(Image, f32, f32)> {
+        let icon = Icon::File(path.to_path_buf());
+        let key = self.key(&icon, PREVIEW)?;
+        match self.loaded.get(&key) {
+            Some(found) => {
+                let image = found.clone()?;
+                let size = image.size();
+                let scale = if self.scale > 0.0 { self.scale } else { 1.0 };
+                Some((image, size.width as f32 / scale, size.height as f32 / scale))
+            }
+            None => {
+                self.request(key, icon, self.pixels(PREVIEW));
+                None
+            }
         }
     }
 

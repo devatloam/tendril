@@ -27,7 +27,7 @@ const LOOK: Groups = &[
     ("Touches", &["glow", "gradient_divider"]),
 ];
 const LAYOUT: Groups = &[("Size", &["size", "details"]), ("Before you type", &["favourites", "quick_keys", "headings"])];
-const FILES: Groups = &[("Search", &["index", "hidden", "gitignore"])];
+const FILES: Groups = &[("Search", &["index", "hidden", "gitignore"]), ("Before you type", &["recent"])];
 
 thread_local! {
     static WINDOW: RefCell<Option<SettingsWindow>> = const { RefCell::new(None) };
@@ -35,6 +35,7 @@ thread_local! {
     static ENGINES: RefCell<Vec<config::Engine>> = const { RefCell::new(Vec::new()) };
     static LINKS: RefCell<Vec<config::Quicklink>> = const { RefCell::new(Vec::new()) };
     static SNIPPETS: RefCell<Vec<config::Snippet>> = const { RefCell::new(Vec::new()) };
+    static ALIASES: RefCell<Vec<config::Alias>> = const { RefCell::new(Vec::new()) };
     /// File search's folders and patterns, as they're being edited.
     static FILE_LISTS: RefCell<FileLists> = const { RefCell::new(FileLists { folders: Vec::new(), include: Vec::new(), exclude: Vec::new(), exclude_regex: Vec::new() }) };
     /// A change waiting for "Turn On" in the GPU question.
@@ -203,6 +204,7 @@ fn fill(w: &SettingsWindow) {
     SNIPPETS.with_borrow_mut(|s| {
         *s = config.snippet.iter().map(|s| config::Snippet { text: s.text.replace('\n', "\\n"), ..s.clone() }).collect()
     });
+    ALIASES.with_borrow_mut(|a| *a = config.alias.clone());
     let f = &config.files;
     FILE_LISTS.with_borrow_mut(|l| {
         *l = FileLists {
@@ -335,6 +337,16 @@ fn show_lists(w: &SettingsWindow) {
         s.iter().map(|s| Entry { name: s.name.as_str().into(), keyword: s.keyword.as_str().into(), url: s.text.as_str().into() }).collect()
     });
     w.set_snippets(ModelRc::new(VecModel::from(snippets)));
+    let aliases: Vec<Entry> = ALIASES.with_borrow(|a| {
+        a.iter()
+            .map(|a| Entry {
+                name: if a.name.is_empty() { a.id.as_str().into() } else { a.name.as_str().into() },
+                keyword: a.word.as_str().into(),
+                url: a.id.as_str().into(),
+            })
+            .collect()
+    });
+    w.set_aliases(ModelRc::new(VecModel::from(aliases)));
     let model = |list: &[String]| -> ModelRc<SharedString> {
         ModelRc::new(VecModel::from(list.iter().map(|s| s.as_str().into()).collect::<Vec<SharedString>>()))
     };
@@ -499,6 +511,23 @@ fn wire(w: &SettingsWindow) {
             }
         });
         save_snippets();
+        with_window(show_lists);
+    });
+    w.on_alias_edited(|i, word| {
+        ALIASES.with_borrow_mut(|a| {
+            if let Some(a) = a.get_mut(i as usize) {
+                a.word = word.trim().to_lowercase();
+            }
+        });
+        save_aliases();
+    });
+    w.on_alias_remove(|i| {
+        ALIASES.with_borrow_mut(|a| {
+            if (i as usize) < a.len() {
+                a.remove(i as usize);
+            }
+        });
+        save_aliases();
         with_window(show_lists);
     });
     w.on_list_edited(|name, i, text| {
@@ -706,6 +735,20 @@ fn handle() -> isize {
 #[cfg(not(windows))]
 fn handle() -> isize {
     0
+}
+
+/// Saves the aliases that have a word, one word each; one being retyped waits until it has one.
+fn save_aliases() {
+    let aliases = ALIASES.with_borrow(|a| a.clone());
+    let entries: Vec<Vec<(&str, config::Value)>> = aliases
+        .iter()
+        .filter(|a| !a.word.is_empty() && !a.word.contains(char::is_whitespace))
+        .map(|a| vec![("word", config::Value::Text(&a.word)), ("id", config::Value::Text(&a.id)), ("name", config::Value::Text(&a.name))])
+        .collect();
+    if let Err(e) = config::set_list("alias", &entries) {
+        with_window(|w| w.set_update_note(format!("Couldn't save: {e}").into()));
+    }
+    with_app(|a| a.settings_changed());
 }
 
 /// Saves the snippets that have a name and some text; half-typed ones wait until they do.

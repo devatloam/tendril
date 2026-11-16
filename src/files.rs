@@ -1,29 +1,50 @@
 //! Finding files by name. The folders in [files] are walked on a background thread now and then
 //! (on starting, on opening after a while, when the rules change, or by "Index Files"), and what's
-//! found is kept in memory, names and paths only. Typing matches against that list; nothing
-//! reads the disk while you type.
+//! found is kept in memory, paths only. There's no limit on how many: past the first few thousand
+//! the walk paces itself and runs at background priority, so a big folder takes longer rather
+//! than taking over the computer.
+//!
+//! Typing matches names loosely ("rprt" finds report.pdf) on a thread of its own, so a big index
+//! never slows typing: the list gets its Files when they're found, a few milliseconds later, and
+//! a search that's been typed past is given up.
 
 use crate::catalog::Item;
 use crate::config::Files;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
+use nucleo_matcher::{Matcher, Utf32Str};
 use regex::Regex;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
 /// Below this many letters, a search would match most of the disk.
 const SHORTEST: usize = 2;
 pub const MAX_SHOWN: usize = 8;
+/// The walk runs flat out for this many, then paces itself.
+const UNPACED: usize = 20_000;
 
+#[derive(Clone)]
 struct Entry {
-    /// The name, lowercase, for matching.
-    name: Box<str>,
-    path: PathBuf,
+    path: Box<str>,
+    /// Where the name starts in `path`.
+    name_at: u32,
     dir: bool,
 }
 
-#[derive(Default)]
+impl Entry {
+    fn new(path: &str, dir: bool) -> Option<Entry> {
+        let name_at = Path::new(path).file_name()?.len();
+        Some(Entry { path: path.into(), name_at: (path.len() - name_at) as u32, dir })
+    }
+
+    fn name(&self) -> &str {
+        &self.path[self.name_at as usize..]
+    }
+}
+
+#[derive(Default, Clone)]
 pub struct Index {
     entries: Vec<Entry>,
 }
@@ -239,6 +260,7 @@ fn walk(files: &Files, progress: Option<fn()>) -> (Index, bool, Vec<String>) {
     let mut entries = Vec::new();
     let mut full = false;
     let mut told = Instant::now();
+    let mut paced = false;
     for entry in builder.build().flatten() {
         if let Some(progress) = progress
             && told.elapsed() > Duration::from_millis(300)
@@ -253,16 +275,43 @@ fn walk(files: &Files, progress: Option<fn()>) -> (Index, bool, Vec<String>) {
         if !dir && !rules.wanted(entry.path()) {
             continue;
         }
-        let name = entry.file_name().to_string_lossy().to_lowercase().into_boxed_str();
-        entries.push(Entry { name, path: entry.into_path(), dir });
+        // A path that isn't valid Unicode can't be matched as text; it's left out.
+        let Some(e) = entry.path().to_str().and_then(|p| Entry::new(p, dir)) else { continue };
+        entries.push(e);
         FOUND.store(entries.len(), Ordering::Relaxed);
-        if entries.len() >= files.max_files {
+        if files.max_files > 0 && entries.len() >= files.max_files {
             full = true;
             break;
+        }
+        // Past the first few thousand: background priority, and a short rest every so often,
+        // so a huge folder is walked slowly rather than keeping the disk and a core busy.
+        if progress.is_some() && entries.len() > UNPACED {
+            if !paced {
+                paced = true;
+                background_priority();
+            }
+            if entries.len().is_multiple_of(1000) {
+                std::thread::sleep(Duration::from_millis(3));
+            }
         }
     }
     entries.shrink_to_fit();
     (Index { entries }, full, problems)
+}
+
+/// Lowers this thread's priority, disk included on Windows, for the rest of the walk. The thread
+/// ends with the walk, so nothing needs setting back.
+fn background_priority() {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN};
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+    }
+    #[cfg(target_os = "linux")]
+    unsafe {
+        // On Linux a thread has its own niceness.
+        libc::setpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t, 10);
+    }
 }
 
 /// Starts a walk on its own thread, unless one is under way. `progress` is called on the UI
@@ -304,13 +353,10 @@ pub fn cache_path() -> PathBuf {
 fn save(index: &Index, path: &Path) {
     let mut text = String::with_capacity(index.entries.len() * 80);
     for e in &index.entries {
-        // A path that isn't valid Unicode can't be written as text; it's found on the next walk.
-        if let Some(p) = e.path.to_str() {
-            text.push(if e.dir { 'd' } else { 'f' });
-            text.push('\t');
-            text.push_str(p);
-            text.push('\n');
-        }
+        text.push(if e.dir { 'd' } else { 'f' });
+        text.push('\t');
+        text.push_str(&e.path);
+        text.push('\n');
     }
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -324,9 +370,7 @@ fn load(path: &Path) -> Option<Index> {
         .lines()
         .filter_map(|line| {
             let (kind, path) = line.split_once('\t')?;
-            let path = PathBuf::from(path);
-            let name = path.file_name()?.to_string_lossy().to_lowercase().into_boxed_str();
-            Some(Entry { name, path, dir: kind == "d" })
+            Entry::new(path, kind == "d")
         })
         .collect();
     (!entries.is_empty()).then_some(Index { entries })
@@ -350,46 +394,96 @@ impl Index {
 
     /// Forgets a file or folder (and what's in it) that Tendril moved to the bin.
     pub fn remove(&mut self, path: &Path) {
-        self.entries.retain(|e| !e.path.starts_with(path));
+        self.entries.retain(|e| !Path::new(&*e.path).starts_with(path));
     }
 
-    /// The best matches for what's typed: every word somewhere in the name, names that start
-    /// with it first, then shorter paths.
-    pub fn find(&self, query: &str) -> Vec<Item> {
+    /// The best matches for what's typed. Names match loosely, each word anywhere in the name
+    /// with its letters in order ("rprt" finds report.pdf), as long as they hang together; then
+    /// the exact name, names starting with it and names containing it come first, then shorter
+    /// paths. None if `stale` says a newer search came along first.
+    fn find(&self, query: &str, matcher: &mut Matcher, stale: impl Fn() -> bool) -> Option<Vec<Item>> {
         let query = query.trim().to_lowercase();
-        if query.chars().filter(|c| !c.is_whitespace()).count() < SHORTEST {
-            return Vec::new();
+        let letters = query.chars().filter(|c| !c.is_whitespace()).count();
+        if letters < SHORTEST {
+            return Some(Vec::new());
         }
-        let words: Vec<&str> = query.split_whitespace().collect();
-        let mut found: Vec<(u8, usize, &Entry)> = self
-            .entries
-            .iter()
-            .filter(|e| words.iter().all(|w| e.name.contains(w)))
-            .map(|e| {
-                let rank = if *e.name == *query {
-                    0
-                } else if e.name.starts_with(&query) {
-                    1
-                } else if e.name.contains(&query) {
-                    2
-                } else {
-                    3
-                };
-                (rank, e.path.as_os_str().len(), e)
-            })
-            .collect();
-        let by = |a: &(u8, usize, &Entry), b: &(u8, usize, &Entry)| (a.0, a.1).cmp(&(b.0, b.1));
-        if found.len() > MAX_SHOWN {
-            found.select_nth_unstable_by(MAX_SHOWN, by);
-            found.truncate(MAX_SHOWN);
+        let pattern = Pattern::new(&query, CaseMatching::Ignore, Normalization::Smart, AtomKind::Fuzzy);
+        // Letters scattered across a name score low; below this, it isn't a match worth showing.
+        let least = 12 * letters as u32;
+        let mut buf = Vec::new();
+        // The best few so far, best first: (score, path length, entry).
+        let mut best: Vec<(u32, usize, &Entry)> = Vec::with_capacity(MAX_SHOWN + 1);
+        for (i, e) in self.entries.iter().enumerate() {
+            if i % 4096 == 0 && stale() {
+                return None;
+            }
+            let Some(score) = pattern.score(Utf32Str::new(e.name(), &mut buf), matcher).filter(|&s| s >= least) else { continue };
+            let name = e.name().to_lowercase();
+            let bonus = if name == query {
+                300
+            } else if name.starts_with(&query) {
+                200
+            } else if name.contains(&query) {
+                100
+            } else {
+                0
+            };
+            let candidate = (score + bonus, e.path.len(), e);
+            let better = |a: &(u32, usize, &Entry), b: &(u32, usize, &Entry)| a.0 > b.0 || (a.0 == b.0 && a.1 < b.1);
+            if best.len() == MAX_SHOWN && !better(&candidate, &best[MAX_SHOWN - 1]) {
+                continue;
+            }
+            let at = best.iter().position(|b| better(&candidate, b)).unwrap_or(best.len());
+            best.insert(at, candidate);
+            best.truncate(MAX_SHOWN);
         }
-        found.sort_by(by);
-        found.into_iter().map(|(_, _, e)| crate::paths::item(e.dir, display_name(&e.path), e.path.clone())).collect()
+        Some(best.into_iter().map(|(_, _, e)| crate::paths::item(e.dir, e.name().to_string(), PathBuf::from(&*e.path))).collect())
     }
 }
 
-fn display_name(path: &Path) -> String {
-    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+/// Which search is the newest: a search sees it's been typed past when this moves on.
+static ASKED: AtomicU64 = AtomicU64::new(0);
+
+/// A search for the file search thread: what's typed, and the index to look in.
+struct Ask {
+    number: u64,
+    query: String,
+    index: Arc<Index>,
+}
+
+/// Looks for files on a thread of its own and hands back what it found, so typing never waits
+/// on a big index. The thread sleeps until there's something to look for.
+pub struct Finder {
+    tx: Option<mpsc::Sender<Ask>>,
+}
+
+impl Finder {
+    pub fn new(found: fn(String, Vec<Item>)) -> Finder {
+        let (tx, rx) = mpsc::channel::<Ask>();
+        let started = std::thread::Builder::new().name("file-search".into()).spawn(move || {
+            let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT.match_paths());
+            while let Ok(mut ask) = rx.recv() {
+                // Only the newest of whatever's waiting matters.
+                while let Ok(newer) = rx.try_recv() {
+                    ask = newer;
+                }
+                let number = ask.number;
+                if let Some(items) = ask.index.find(&ask.query, &mut matcher, || ASKED.load(Ordering::Relaxed) != number) {
+                    let query = ask.query;
+                    let _ = slint::invoke_from_event_loop(move || found(query, items));
+                }
+            }
+        });
+        Finder { tx: started.ok().map(|_| tx) }
+    }
+
+    /// Looks for `query` in `index`, giving up any search still running.
+    pub fn ask(&self, query: &str, index: Arc<Index>) {
+        let number = ASKED.fetch_add(1, Ordering::Relaxed) + 1;
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(Ask { number, query: query.to_string(), index });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -417,10 +511,15 @@ mod tests {
         dir
     }
 
+    fn search(index: &Index, query: &str) -> Vec<String> {
+        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT.match_paths());
+        index.find(query, &mut matcher, || false).unwrap().into_iter().map(|i| i.title).collect()
+    }
+
     fn names(files: &Files) -> Vec<String> {
         let (index, _, problems) = walk(files, None);
         assert!(problems.is_empty(), "{problems:?}");
-        let mut names: Vec<String> = index.entries.iter().map(|e| e.name.to_string()).collect();
+        let mut names: Vec<String> = index.entries.iter().map(|e| e.name().to_lowercase()).collect();
         names.sort();
         names
     }
@@ -457,10 +556,13 @@ mod tests {
         let dir = tree("find");
         let files = Files { folders: vec![dir.to_string_lossy().into_owned()], ..Files::default() };
         let (index, _, _) = walk(&files, None);
-        let titles: Vec<String> = index.find("report").into_iter().map(|i| i.title).collect();
-        assert_eq!(titles, ["report.pdf", "report-draft.docx"]);
-        assert_eq!(index.find("draft rep").len(), 1, "every word, in any order");
-        assert!(index.find("r").is_empty(), "one letter matches too much");
+        assert_eq!(search(&index, "report"), ["report.pdf", "report-draft.docx"]);
+        assert_eq!(search(&index, "draft rep"), ["report-draft.docx"], "every word, in any order");
+        assert!(search(&index, "r").is_empty(), "one letter matches too much");
+        // Loosely: letters in order, close enough together.
+        assert_eq!(search(&index, "rprt").first().map(String::as_str), Some("report.pdf"));
+        assert_eq!(search(&index, "mainrs"), ["main.rs"]);
+        assert!(search(&index, "zqx").is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -473,8 +575,8 @@ mod tests {
         save(&index, &path);
         let back = load(&path).unwrap();
         assert_eq!(back.len(), index.len());
-        assert_eq!(back.find("report").len(), 2);
-        assert!(back.entries.iter().any(|e| e.dir && &*e.name == "notes"));
+        assert_eq!(search(&back, "report").len(), 2);
+        assert!(back.entries.iter().any(|e| e.dir && e.name() == "notes"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

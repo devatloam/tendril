@@ -49,6 +49,8 @@ impl Kind {
 pub enum Run {
     App(crate::apps::Launch),
     Power(Power),
+    /// Emptying the bin, dark mode, the volume and the like.
+    System(crate::system::Sys),
     Url(String),
     Copy(String),
     Theme(&'static str),
@@ -85,6 +87,8 @@ pub enum Run {
     Clip(u64),
     /// A snippet's text, before {date} and the like are filled in.
     Snippet(String),
+    /// Keeps this word as the alias being set (Set Alias); empty takes the alias away.
+    SaveAlias(String),
     /// An open window, by the system's id for it.
     Window(u64),
     ClearClipboard,
@@ -138,10 +142,12 @@ impl Item {
             Run::Path(_, false) => "Open File",
             Run::Prefill(_) => "Type Text",
             Run::RestartToUpdate => "Restart",
-            Run::Appearance | Run::Clipboard | Run::Windows => "Open",
+            Run::Appearance | Run::Clipboard | Run::Windows | Run::System(crate::system::Sys::Downloads) => "Open",
             Run::Clip(_) | Run::Snippet(_) if crate::clipboard::can_paste() => "Paste",
             Run::Clip(_) | Run::Snippet(_) => "Copy",
             Run::Window(_) => "Switch to Window",
+            Run::SaveAlias(ref w) if w.is_empty() => "Remove Alias",
+            Run::SaveAlias(_) => "Save Alias",
             _ => "Run Command",
         }
     }
@@ -161,13 +167,22 @@ pub fn commands() -> Vec<Item> {
         Item::command("index-files", "Index Files", "files search reindex rescan folders documents status", "folder", 7, Run::IndexFiles),
         Item::command("setup", "Set Up Tendril", "onboarding welcome walkthrough shortcut hotkey", "wave", 7, Run::Onboarding),
         Item::command("about", "About Tendril", "version info", "tendril", 7, Run::About),
+    ];
+    // The system's own switches, before the power commands.
+    for s in crate::system::Sys::ALL.into_iter().filter(|s| s.available()) {
+        let (id, title, keywords, icon) = s.describe();
+        // Red for the one that deletes.
+        let tint = if s == crate::system::Sys::EmptyBin { 4 } else { 7 };
+        items.push(Item::command(id, title, keywords, icon, tint, Run::System(s)));
+    }
+    items.extend([
         Item::command("lock", "Lock Screen", "lock away", "lock", 7, Run::Power(Power::Lock)),
         Item::command("sleep", "Sleep", "suspend", "moon", 7, Run::Power(Power::Sleep)),
         Item::command("logout", "Log Out", "sign out logoff", "logout", 7, Run::Power(Power::LogOut)),
         Item::command("restart", "Restart", "reboot", "restart", 7, Run::Power(Power::Restart)),
         Item::command("shutdown", "Shut Down", "power off poweroff turn off", "power", 4, Run::Power(Power::ShutDown)),
         Item::command("quit", "Quit Tendril", "exit close", "quit", 7, Run::Quit),
-    ];
+    ]);
     #[cfg(windows)]
     items.extend(windows_settings());
     if crate::switcher::available() {

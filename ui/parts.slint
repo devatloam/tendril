@@ -33,6 +33,10 @@ export struct Detail {
     subtitle: string,
     kind: string,
     facts: [Fact],
+    // A picture file, shown in place of the icon, at its size on screen; none when empty.
+    preview: image,
+    preview-width: length,
+    preview-height: length,
 }
 
 export struct ActionRow {
@@ -272,12 +276,27 @@ export component DetailPane inherits Rectangle {
         padding: 22px;
         spacing: 6px;
         alignment: start;
-        HorizontalLayout {
+        if detail.preview-width == 0: HorizontalLayout {
             alignment: start;
             RowIcon {
                 source: detail.icon;
                 tint: detail.tint;
                 size: 56px;
+            }
+        }
+        // Loaded at exactly these pixels (icons.rs), so it's drawn sharp, not scaled.
+        if detail.preview-width > 0: HorizontalLayout {
+            alignment: start;
+            Rectangle {
+                width: detail.preview-width;
+                height: detail.preview-height;
+                border-radius: 6px;
+                clip: true;
+                Image {
+                    source: detail.preview;
+                    width: parent.width;
+                    height: parent.height;
+                }
             }
         }
 

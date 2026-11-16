@@ -594,6 +594,8 @@ export component SettingsWindow inherits Window {
     in property <[Entry]> links;
     // A snippet's text travels in `url`.
     in property <[Entry]> snippets;
+    // An alias: its word in `keyword`, what it opens in `name`, and that thing's id in `url`.
+    in property <[Entry]> aliases;
     // File search: its settings, how the index stands, and its lists.
     in property <[ChoiceGroup]> files;
     in property <string> files-status;
@@ -641,6 +643,8 @@ export component SettingsWindow inherits Window {
     callback snippet-edited(int, string, string);
     callback snippet-add();
     callback snippet-remove(int);
+    callback alias-edited(int, string);
+    callback alias-remove(int);
     // Which list ("folders", "include", "exclude", "exclude_regex"), and where in it.
     callback list-edited(string, int, string);
     callback list-add(string);
@@ -692,14 +696,14 @@ export component SettingsWindow inherits Window {
                     root.dismiss();
                     return accept;
                 }
-                // Tabs from the keyboard: Ctrl Tab and Ctrl Shift Tab, Ctrl 1 to 9, or ↑ ↓ when no
+                // Tabs from the keyboard: Ctrl Tab and Ctrl Shift Tab, Ctrl 1 to 9 (the first nine), or ↑ ↓ when no
                 // field has the keys.
                 if e.modifiers.control && e.text == Key.Tab && !e.modifiers.shift {
-                    root.tab = Math.mod(root.tab + 1, 9);
+                    root.tab = Math.mod(root.tab + 1, 10);
                     return accept;
                 }
                 if e.modifiers.control && (e.text == Key.Backtab || (e.text == Key.Tab && e.modifiers.shift)) {
-                    root.tab = Math.mod(root.tab + 8, 9);
+                    root.tab = Math.mod(root.tab + 9, 10);
                     return accept;
                 }
                 if e.modifiers.control && (e.text == "1" || e.text == "2" || e.text == "3" || e.text == "4" || e.text == "5" || e.text == "6" || e.text == "7" || e.text == "8" || e.text == "9") {
@@ -707,7 +711,7 @@ export component SettingsWindow inherits Window {
                     return accept;
                 }
                 if keys.has-focus && e.text == Key.DownArrow {
-                    root.tab = min(root.tab + 1, 8);
+                    root.tab = min(root.tab + 1, 9);
                     return accept;
                 }
                 if keys.has-focus && e.text == Key.UpArrow {
@@ -799,8 +803,8 @@ export component SettingsWindow inherits Window {
                         }
 
                         Tab {
-                            label: "Files";
-                            icon: @image-url("icons/folder.svg");
+                            label: "Aliases";
+                            icon: @image-url("icons/link.svg");
                             selected: root.tab == 6;
                             clicked => {
                                 root.tab = 6;
@@ -808,8 +812,8 @@ export component SettingsWindow inherits Window {
                         }
 
                         Tab {
-                            label: "Privacy & Data";
-                            icon: @image-url("icons/lock.svg");
+                            label: "Files";
+                            icon: @image-url("icons/folder.svg");
                             selected: root.tab == 7;
                             clicked => {
                                 root.tab = 7;
@@ -817,11 +821,20 @@ export component SettingsWindow inherits Window {
                         }
 
                         Tab {
-                            label: "About";
-                            icon: @image-url("icons/tendril.svg");
+                            label: "Privacy & Data";
+                            icon: @image-url("icons/lock.svg");
                             selected: root.tab == 8;
                             clicked => {
                                 root.tab = 8;
+                            }
+                        }
+
+                        Tab {
+                            label: "About";
+                            icon: @image-url("icons/tendril.svg");
+                            selected: root.tab == 9;
+                            clicked => {
+                                root.tab = 9;
                             }
                         }
                     }
@@ -850,7 +863,7 @@ export component SettingsWindow inherits Window {
                             spacing: Look.fluent ? 20px : 18px;
                             alignment: start;
                             Text {
-                                text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : root.tab == 5 ? "Snippets" : root.tab == 6 ? "Files" : root.tab == 7 ? "Privacy & Data" : "About";
+                                text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : root.tab == 5 ? "Snippets" : root.tab == 6 ? "Aliases" : root.tab == 7 ? "Files" : root.tab == 8 ? "Privacy & Data" : "About";
                                 color: Theme.ink;
                                 // Windows' page titles are large.
                                 font-size: Look.fluent ? 28px : 20px;
@@ -1114,6 +1127,54 @@ export component SettingsWindow inherits Window {
                             }
 
                             if root.tab == 6: VerticalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Your own word for an app, command, snippet or quicklink: type it and that comes first. To add one, select something in Tendril, press Ctrl K and choose Set Alias.";
+                                    color: Theme.ink-3;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+
+                                if root.aliases.length == 0: Text {
+                                    text: "No aliases yet.";
+                                    color: Theme.ink-2;
+                                    font-size: 13px;
+                                }
+
+                                for alias[i] in root.aliases: Card {
+                                    HorizontalLayout {
+                                        padding: 10px;
+                                        padding-left: 14px;
+                                        spacing: 10px;
+                                        Field {
+                                            width: 120px;
+                                            text: alias.keyword;
+                                            placeholder: "Word";
+                                            edited(t) => {
+                                                root.alias-edited(i, t);
+                                            }
+                                        }
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: "opens " + alias.name;
+                                            color: Look.fluent ? Look.ink : Theme.ink;
+                                            font-size: 13px;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+
+                                        Button {
+                                            label: "Remove";
+                                            clicked => {
+                                                root.alias-remove(i);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if root.tab == 7: VerticalLayout {
                                 spacing: 18px;
                                 Card {
                                     height: 64px;
@@ -1232,7 +1293,7 @@ export component SettingsWindow inherits Window {
                                 }
                             }
 
-                            if root.tab == 7: VerticalLayout {
+                            if root.tab == 8: VerticalLayout {
                                 spacing: 10px;
                                 Text {
                                     text: "Everything Tendril keeps stays on this computer, in the files below. Nothing is collected about you, and nothing is sent anywhere except the two things under What goes online.";
@@ -1271,7 +1332,7 @@ export component SettingsWindow inherits Window {
                                         }
 
                                         Text {
-                                            text: "Files are ranked by name only: the exact name, then names starting with what you typed, then shorter paths. What you open from file search isn't counted.";
+                                            text: "Files are ranked by name: the exact name, then names starting with what you typed, then looser matches, then shorter paths. The last eight files you opened from Tendril are kept for Recent Files, unless you turn that off on the Files tab. Your aliases always come first.";
                                             color: Look.fluent ? Look.ink : Theme.ink;
                                             font-size: 13px;
                                             wrap: word-wrap;
@@ -1429,7 +1490,7 @@ export component SettingsWindow inherits Window {
                                 }
                             }
 
-                            if root.tab == 8: VerticalLayout {
+                            if root.tab == 9: VerticalLayout {
                                 spacing: 14px;
                                 HorizontalLayout {
                                     spacing: 16px;

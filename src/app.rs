@@ -707,6 +707,8 @@ impl App {
         let files = self.config.borrow().files.clone();
         *self.indexed_with.borrow_mut() = Some(files.clone());
         if !files.index {
+            // Off means nothing kept about your files either.
+            let _ = crate::files::forget();
             crate::files::set_off();
             *self.files.borrow_mut() = crate::files::Index::default();
             if tell {
@@ -716,8 +718,75 @@ impl App {
         }
         self.indexed_at.set(Some(Instant::now()));
         self.tell_indexed.set(self.tell_indexed.get() || tell);
-        crate::files::start(files, || with_app(|a| a.files_progress()), |index| with_app(|a| a.files_indexed(index)));
+        // Nothing in memory yet (just started): last run's index meanwhile.
+        let cached: Option<fn(crate::files::Index)> =
+            (self.files.borrow().len() == 0).then_some(|index| with_app(|a| a.files_cached(index)));
+        crate::files::start(files, cached, || with_app(|a| a.files_progress()), |index| with_app(|a| a.files_indexed(index)));
         self.set_busy(true);
+    }
+
+    /// Deletes something Tendril keeps (Settings' Privacy & Data tab), on disk and in memory.
+    /// "all" is everything but your settings. Says what was done.
+    pub fn delete_data(&self, key: &str) -> Result<String, String> {
+        let gone = |r: std::io::Result<()>| match r {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        };
+        let said = match key {
+            "ranking" => {
+                let mut usage = self.usage.borrow_mut();
+                usage.forget_all();
+                usage.save();
+                self.usage_changed.set(false);
+                "Ranking reset. Favourites stay pinned."
+            }
+            "clipboard" => {
+                let mut history = self.history.borrow_mut();
+                history.clips.clear();
+                history.save();
+                "Clipboard history cleared."
+            }
+            "files" => {
+                crate::files::forget().map_err(|e| e.to_string())?;
+                *self.files.borrow_mut() = crate::files::Index::default();
+                *self.indexed_with.borrow_mut() = None;
+                self.indexed_at.set(None);
+                "File index deleted. It's made again the next time Tendril opens."
+            }
+            "apps" => {
+                gone(std::fs::remove_file(apps::cache_path()))?;
+                "App list deleted. It's made again on the next start."
+            }
+            "icons" => {
+                crate::sites::forget().map_err(|e| e.to_string())?;
+                self.rebuild_catalog();
+                "Website icons deleted."
+            }
+            "all" => {
+                for key in ["ranking", "clipboard", "files", "apps", "icons"] {
+                    self.delete_data(key)?;
+                }
+                "Everything but your settings deleted."
+            }
+            _ => return Err(format!("nothing called {key}")),
+        };
+        if let Some(ui) = self.ui.upgrade() {
+            self.refresh(&ui.get_query());
+        }
+        Ok(said.into())
+    }
+
+    /// Last run's index, while the walk runs. Only taken if the walk hasn't finished first.
+    fn files_cached(&self, index: crate::files::Index) {
+        if crate::files::walking() && self.files.borrow().len() == 0 {
+            *self.files.borrow_mut() = index;
+            if let Some(ui) = self.ui.upgrade()
+                && !ui.get_query().is_empty()
+            {
+                let keep = self.selected_item().map(|i| i.id);
+                self.refresh_keeping(&ui.get_query(), keep.as_deref());
+            }
+        }
     }
 
     /// A few times a second while the walk runs: the count, where it's shown.

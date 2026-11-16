@@ -4,7 +4,7 @@
 //! launcher's Appearance view applies them.
 
 use crate::app::with_app;
-use crate::{Choice, ChoiceGroup, Entry, Look, SettingsWindow, Theme, appearance, config, hotkey, palettes, system, update};
+use crate::{Choice, ChoiceGroup, Entry, Look, SettingsWindow, Stored, Theme, appearance, config, hotkey, palettes, system, update};
 use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
@@ -38,6 +38,8 @@ thread_local! {
     static FILE_LISTS: RefCell<FileLists> = const { RefCell::new(FileLists { folders: Vec::new(), include: Vec::new(), exclude: Vec::new(), exclude_regex: Vec::new() }) };
     /// A change waiting for "Turn On" in the GPU question.
     static PENDING: Cell<Option<(&'static str, i32)>> = const { Cell::new(None) };
+    /// Something kept, waiting for "Delete" in the confirm dialog.
+    static PENDING_DELETE: Cell<Option<&'static str>> = const { Cell::new(None) };
 }
 
 struct FileLists {
@@ -167,8 +169,78 @@ fn fill(w: &SettingsWindow) {
         }
     });
     show_lists(w);
+    show_stored(w);
     w.set_version(update::VERSION.into());
     theme(w);
+}
+
+/// Privacy & Data: what's kept, where, and how big.
+fn show_stored(w: &SettingsWindow) {
+    let stored: Vec<Stored> = crate::data::kept()
+        .into_iter()
+        .map(|k| Stored {
+            key: k.key.into(),
+            title: k.title.into(),
+            about: k.about.into(),
+            path: k.path.to_string_lossy().as_ref().into(),
+            size: crate::data::human(crate::data::size(&k.path)).into(),
+            action: k.action.unwrap_or_default().into(),
+        })
+        .collect();
+    w.set_stored(ModelRc::new(VecModel::from(stored)));
+    let ranking = crate::usage::path();
+    w.set_ranking_path(ranking.to_string_lossy().as_ref().into());
+    w.set_ranking_size(crate::data::human(crate::data::size(&ranking)).into());
+}
+
+/// Where a kept thing is, for Show.
+fn stored_path(key: &str) -> Option<std::path::PathBuf> {
+    if key == "ranking" {
+        return Some(crate::usage::path());
+    }
+    crate::data::kept().into_iter().find(|k| k.key == key).map(|k| k.path)
+}
+
+/// Asks before deleting something kept; `answer` does it.
+fn ask_delete(key: &str) {
+    let (key, title, message, label): (&'static str, &str, &str, &str) = match key {
+        "ranking" => (
+            "ranking",
+            "Reset ranking?",
+            "Tendril forgets what you've opened and what you picked for each search, so results go back to being ordered by name. Your favourites stay pinned.",
+            "Reset",
+        ),
+        "clipboard" => {
+            ("clipboard", "Clear clipboard history?", "Everything you've copied is deleted from Tendril. This can't be undone.", "Clear")
+        }
+        "files" => (
+            "files",
+            "Delete the file index?",
+            "File search finds nothing until Tendril looks through your folders again, the next time it opens.",
+            "Delete",
+        ),
+        "apps" => {
+            ("apps", "Delete the app list?", "Your apps are found again on the next start. Until then the list stays as it is.", "Delete")
+        }
+        "icons" => ("icons", "Delete website icons?", "Quicklinks show a plain icon until theirs are fetched again.", "Delete"),
+        "all" => (
+            "all",
+            "Delete everything but settings?",
+            "Ranking, clipboard history, the file index, the app list and website icons are deleted. Your settings and favourites stay.",
+            "Delete",
+        ),
+        _ => return,
+    };
+    with_window(|w| {
+        w.set_confirm_title(title.into());
+        w.set_confirm_message(message.into());
+        w.set_confirm_label(label.into());
+        w.set_confirm_danger(true);
+        let mut icons = crate::icons::Icons::default();
+        w.set_confirm_icon(icons.builtin_solid("eraser"));
+        w.set_confirm_open(true);
+    });
+    PENDING_DELETE.set(Some(key));
 }
 
 /// The setting rows on the General, Look and Layout tabs.
@@ -403,6 +475,48 @@ fn wire(w: &SettingsWindow) {
         {
             apply(key, delta);
         }
+        if let Some(key) = PENDING_DELETE.take()
+            && yes
+        {
+            let mut result = Err(String::from("Tendril isn't running"));
+            with_app(|a| result = a.delete_data(key));
+            with_window(|w| {
+                w.set_data_note(result.unwrap_or_else(|e| format!("Couldn't delete it: {e}")).into());
+                show_stored(w);
+                w.set_files_status(crate::files::status().into());
+            });
+        }
+    });
+    w.on_data_show(|key| {
+        let Some(path) = stored_path(&key) else { return };
+        // A file is shown selected in its folder; a folder (or a file not made yet) is opened.
+        let shown = if path.is_file() {
+            system::reveal(&path)
+        } else {
+            let folder = if path.is_dir() { path } else { path.parent().map(|p| p.to_path_buf()).unwrap_or(path) };
+            let _ = std::fs::create_dir_all(&folder);
+            system::open(&folder.to_string_lossy())
+        };
+        if let Err(e) = shown {
+            with_window(|w| w.set_data_note(format!("Couldn't show it: {e}").into()));
+        }
+    });
+    w.on_data_delete(|key| ask_delete(&key));
+    w.on_resize(|dir| {
+        use slint::winit_030::winit::window::ResizeDirection as R;
+        let direction = match dir.as_str() {
+            "n" => R::North,
+            "s" => R::South,
+            "e" => R::East,
+            "w" => R::West,
+            "ne" => R::NorthEast,
+            "nw" => R::NorthWest,
+            "se" => R::SouthEast,
+            _ => R::SouthWest,
+        };
+        with_window(|w| {
+            let _ = w.window().with_winit_window(|winit| winit.drag_resize_window(direction));
+        });
     });
 }
 
@@ -422,6 +536,7 @@ fn choose(key: &str, index: i32) {
             w.set_confirm_title("Draw with the GPU?".into());
             w.set_confirm_message(message.into());
             w.set_confirm_label("Turn On".into());
+            w.set_confirm_danger(false);
             let mut icons = crate::icons::Icons::default();
             w.set_confirm_icon(icons.builtin_solid(icon));
             w.set_confirm_open(true);

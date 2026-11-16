@@ -47,7 +47,7 @@ pub fn settings_frame() -> (bool, f32, f32) {
 }
 
 fn plain_attributes(attrs: WindowAttributes) -> WindowAttributes {
-    let attrs = attrs.with_resizable(false);
+    let attrs = attrs.with_resizable(true);
     #[cfg(target_os = "linux")]
     let attrs = {
         use winit::platform::wayland::WindowAttributesExtWayland;

@@ -70,8 +70,13 @@ pub fn asset_name() -> Option<&'static str> {
     }
 }
 
-/// The HTTP client for update checks and site icons: the system's certificates, a time limit.
+/// The HTTP client for update checks: the system's certificates, a time limit.
 pub fn agent() -> ureq::Agent {
+    agent_with(Duration::from_secs(60))
+}
+
+/// The same client, given up on after `limit`: site icons shouldn't wait on a slow site.
+pub fn agent_with(limit: Duration) -> ureq::Agent {
     // The system's own certificates, so it works wherever the system's browser does (behind
     // a company proxy, say), rather than a list built into Tendril.
     #[cfg(target_os = "linux")]
@@ -81,12 +86,7 @@ pub fn agent() -> ureq::Agent {
         .provider(ureq::tls::TlsProvider::NativeTls)
         .root_certs(ureq::tls::RootCerts::PlatformVerifier)
         .build();
-    ureq::Agent::config_builder()
-        .tls_config(tls)
-        .timeout_global(Some(Duration::from_secs(60)))
-        .user_agent(format!("Tendril/{VERSION}"))
-        .build()
-        .into()
+    ureq::Agent::config_builder().tls_config(tls).timeout_global(Some(limit)).user_agent(format!("Tendril/{VERSION}")).build().into()
 }
 
 /// What GitHub has: the newest release, and the newest preview with a build for this system.

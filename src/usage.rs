@@ -36,7 +36,7 @@ pub fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-fn path() -> PathBuf {
+pub fn path() -> PathBuf {
     dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("tendril").join("usage.toml")
 }
 
@@ -88,6 +88,12 @@ impl Usage {
             self.pinned.push(id.to_string());
             true
         }
+    }
+
+    /// Forgets what you've opened and picked; your favourites stay pinned.
+    pub fn forget_all(&mut self) {
+        self.items.clear();
+        self.picks.clear();
     }
 
     pub fn forget(&mut self, id: &str) {

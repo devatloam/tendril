@@ -26,6 +26,8 @@ pub struct Sources<'a> {
     pub catalog: &'a [Item],
     /// Files matching what's typed, found on the file search thread (files.rs).
     pub files: &'a [Item],
+    /// How many files matched in all, of which `files` are the best.
+    pub files_total: usize,
     pub usage: &'a Usage,
     pub aliases: &'a [Alias],
     pub engines: &'a [Engine],
@@ -33,7 +35,7 @@ pub struct Sources<'a> {
 }
 
 pub fn lines(query: &str, s: &Sources, matcher: &mut Matcher) -> Vec<Line> {
-    let Sources { catalog, files, usage, aliases, engines, links } = *s;
+    let Sources { catalog, files, files_total, usage, aliases, engines, links } = *s;
     if crate::paths::is_path(query) {
         let found = crate::paths::entries(query);
         if found.is_empty() {
@@ -95,6 +97,20 @@ pub fn lines(query: &str, s: &Sources, matcher: &mut Matcher) -> Vec<Line> {
     if !files.is_empty() {
         lines.push(Line::Section("Files".into()));
         lines.extend(files.iter().cloned().map(Line::Item));
+        // More matched than fit here: the rest are a row away.
+        if files_total > files.len() {
+            lines.push(Line::Item(Item {
+                id: "all-files".into(),
+                title: format!("Show All {} Files", crate::files::thousands(files_total)),
+                subtitle: format!("matching “{}”", shorten(query, 40)),
+                keywords: String::new(),
+                kind: Kind::Fallback,
+                icon: Icon::Builtin("folder"),
+                tint: 7,
+                run: Run::AllFiles,
+                path: None,
+            }));
+        }
     }
 
     lines.push(Line::Section(format!("Use “{}” with…", shorten(query, 40))));
@@ -262,7 +278,7 @@ mod tests {
 
     fn find(query: &str, catalog: &[Item], usage: &Usage, aliases: &[Alias], links: &[Quicklink]) -> Vec<Line> {
         let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
-        lines(query, &Sources { catalog, files: &[], usage, aliases, engines: &[], links }, &mut matcher)
+        lines(query, &Sources { catalog, files: &[], files_total: 0, usage, aliases, engines: &[], links }, &mut matcher)
     }
 
     fn titles(query: &str, usage: &Usage) -> Vec<String> {

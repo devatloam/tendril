@@ -89,6 +89,8 @@ pub enum Run {
     Snippet(String),
     /// Keeps this word as the alias being set (Set Alias); empty takes the alias away.
     SaveAlias(String),
+    /// The Files view, for every file matching what's typed.
+    AllFiles,
     /// An open window, by the system's id for it.
     Window(u64),
     ClearClipboard,
@@ -148,6 +150,7 @@ impl Item {
             Run::Window(_) => "Switch to Window",
             Run::SaveAlias(ref w) if w.is_empty() => "Remove Alias",
             Run::SaveAlias(_) => "Save Alias",
+            Run::AllFiles => "Show All",
             _ => "Run Command",
         }
     }

@@ -389,6 +389,14 @@ fn template_for(blur_style: &str, blur: bool, touches: bool) -> String {
         + "\n"
 }
 
+/// When config.toml last changed and how big it is: whether it needs reading again.
+pub type Stamp = (std::time::SystemTime, u64);
+
+pub fn stamp() -> Option<Stamp> {
+    let meta = std::fs::metadata(path()).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
 pub fn path() -> PathBuf {
     dirs::config_dir().unwrap_or_else(std::env::temp_dir).join("tendril").join("config.toml")
 }

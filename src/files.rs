@@ -400,24 +400,34 @@ impl Index {
     /// The best matches for what's typed. Names match loosely, each word anywhere in the name
     /// with its letters in order ("rprt" finds report.pdf), as long as they hang together; then
     /// the exact name, names starting with it and names containing it come first, then shorter
-    /// paths. None if `stale` says a newer search came along first.
-    fn find(&self, query: &str, matcher: &mut Matcher, stale: impl Fn() -> bool) -> Option<Vec<Item>> {
+    /// paths. The best `limit`, and how many matched in all; None if `stale` says a newer search
+    /// came along first.
+    fn find(
+        &self,
+        query: &str,
+        limit: usize,
+        recent: &[String],
+        matcher: &mut Matcher,
+        stale: impl Fn() -> bool,
+    ) -> Option<(Vec<Item>, usize)> {
         let query = query.trim().to_lowercase();
         let letters = query.chars().filter(|c| !c.is_whitespace()).count();
         if letters < SHORTEST {
-            return Some(Vec::new());
+            return Some((Vec::new(), 0));
         }
         let pattern = Pattern::new(&query, CaseMatching::Ignore, Normalization::Smart, AtomKind::Fuzzy);
         // Letters scattered across a name score low; below this, it isn't a match worth showing.
         let least = 12 * letters as u32;
         let mut buf = Vec::new();
         // The best few so far, best first: (score, path length, entry).
-        let mut best: Vec<(u32, usize, &Entry)> = Vec::with_capacity(MAX_SHOWN + 1);
+        let mut best: Vec<(u32, usize, &Entry)> = Vec::with_capacity(limit + 1);
+        let mut total = 0;
         for (i, e) in self.entries.iter().enumerate() {
             if i % 4096 == 0 && stale() {
                 return None;
             }
             let Some(score) = pattern.score(Utf32Str::new(e.name(), &mut buf), matcher).filter(|&s| s >= least) else { continue };
+            total += 1;
             let name = e.name().to_lowercase();
             let bonus = if name == query {
                 300
@@ -428,16 +438,19 @@ impl Index {
             } else {
                 0
             };
-            let candidate = (score + bonus, e.path.len(), e);
+            // A file you opened lately (Recent Files) is likely the one you're after again.
+            let opened = if recent.iter().any(|r| *r == *e.path) { 150 } else { 0 };
+            let candidate = (score + bonus + opened, e.path.len(), e);
             let better = |a: &(u32, usize, &Entry), b: &(u32, usize, &Entry)| a.0 > b.0 || (a.0 == b.0 && a.1 < b.1);
-            if best.len() == MAX_SHOWN && !better(&candidate, &best[MAX_SHOWN - 1]) {
+            if best.len() == limit && !better(&candidate, &best[limit - 1]) {
                 continue;
             }
             let at = best.iter().position(|b| better(&candidate, b)).unwrap_or(best.len());
             best.insert(at, candidate);
-            best.truncate(MAX_SHOWN);
+            best.truncate(limit);
         }
-        Some(best.into_iter().map(|(_, _, e)| crate::paths::item(e.dir, e.name().to_string(), PathBuf::from(&*e.path))).collect())
+        let items = best.into_iter().map(|(_, _, e)| crate::paths::item(e.dir, e.name().to_string(), PathBuf::from(&*e.path))).collect();
+        Some((items, total))
     }
 }
 
@@ -448,7 +461,17 @@ static ASKED: AtomicU64 = AtomicU64::new(0);
 struct Ask {
     number: u64,
     query: String,
+    limit: usize,
+    recent: Vec<String>,
     index: Arc<Index>,
+}
+
+/// What a search found: the best `limit` for `query`, and how many matched in all.
+pub struct Found {
+    pub query: String,
+    pub limit: usize,
+    pub items: Vec<Item>,
+    pub total: usize,
 }
 
 /// Looks for files on a thread of its own and hands back what it found, so typing never waits
@@ -458,7 +481,7 @@ pub struct Finder {
 }
 
 impl Finder {
-    pub fn new(found: fn(String, Vec<Item>)) -> Finder {
+    pub fn new(found: fn(Found)) -> Finder {
         let (tx, rx) = mpsc::channel::<Ask>();
         let started = std::thread::Builder::new().name("file-search".into()).spawn(move || {
             let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT.match_paths());
@@ -468,20 +491,23 @@ impl Finder {
                     ask = newer;
                 }
                 let number = ask.number;
-                if let Some(items) = ask.index.find(&ask.query, &mut matcher, || ASKED.load(Ordering::Relaxed) != number) {
-                    let query = ask.query;
-                    let _ = slint::invoke_from_event_loop(move || found(query, items));
+                if let Some((items, total)) =
+                    ask.index.find(&ask.query, ask.limit, &ask.recent, &mut matcher, || ASKED.load(Ordering::Relaxed) != number)
+                {
+                    let result = Found { query: ask.query, limit: ask.limit, items, total };
+                    let _ = slint::invoke_from_event_loop(move || found(result));
                 }
             }
         });
         Finder { tx: started.ok().map(|_| tx) }
     }
 
-    /// Looks for `query` in `index`, giving up any search still running.
-    pub fn ask(&self, query: &str, index: Arc<Index>) {
+    /// Looks for the best `limit` matches for `query` in `index`, giving up any search still running.
+    /// `recent` are files you opened lately, which rank higher.
+    pub fn ask(&self, query: &str, limit: usize, recent: &[String], index: Arc<Index>) {
         let number = ASKED.fetch_add(1, Ordering::Relaxed) + 1;
         if let Some(tx) = &self.tx {
-            let _ = tx.send(Ask { number, query: query.to_string(), index });
+            let _ = tx.send(Ask { number, query: query.to_string(), limit: limit.max(1), recent: recent.to_vec(), index });
         }
     }
 }
@@ -513,7 +539,7 @@ mod tests {
 
     fn search(index: &Index, query: &str) -> Vec<String> {
         let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT.match_paths());
-        index.find(query, &mut matcher, || false).unwrap().into_iter().map(|i| i.title).collect()
+        index.find(query, MAX_SHOWN, &[], &mut matcher, || false).unwrap().0.into_iter().map(|i| i.title).collect()
     }
 
     fn names(files: &Files) -> Vec<String> {
@@ -563,6 +589,12 @@ mod tests {
         assert_eq!(search(&index, "rprt").first().map(String::as_str), Some("report.pdf"));
         assert_eq!(search(&index, "mainrs"), ["main.rs"]);
         assert!(search(&index, "zqx").is_empty());
+        // A file opened lately comes first, even where another name fits better.
+        let draft = index.entries.iter().find(|e| e.name() == "report-draft.docx").unwrap().path.to_string();
+        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT.match_paths());
+        let (items, total) = index.find("report", MAX_SHOWN, &[draft], &mut matcher, || false).unwrap();
+        assert_eq!(items[0].title, "report-draft.docx");
+        assert_eq!(total, 2);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

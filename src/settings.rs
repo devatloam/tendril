@@ -532,19 +532,7 @@ fn wire(w: &SettingsWindow) {
         with_window(show_lists);
     });
     w.on_pick_folder(|| {
-        // The dialog belongs to this window on Windows, so it opens in front of it.
-        let mut owner = 0isize;
-        #[cfg(windows)]
-        with_window(|w| {
-            use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            let _ = w.window().with_winit_window(|winit| {
-                if let Ok(handle) = winit.window_handle()
-                    && let RawWindowHandle::Win32(h) = handle.as_raw()
-                {
-                    owner = h.hwnd.get();
-                }
-            });
-        });
+        let owner = handle();
         let _ = std::thread::Builder::new().name("folder-picker".into()).spawn(move || {
             let Some(path) = system::pick_folder(owner) else { return };
             let _ = slint::invoke_from_event_loop(move || {
@@ -696,6 +684,28 @@ fn save_links() {
         with_window(|w| w.set_update_note(format!("Couldn't save: {e}").into()));
     }
     with_app(|a| a.settings_changed());
+}
+
+/// The window's handle, so the folder picker opens in front of it (Windows); 0 elsewhere.
+#[cfg(windows)]
+fn handle() -> isize {
+    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let mut owner = 0;
+    with_window(|w| {
+        let _ = w.window().with_winit_window(|winit| {
+            if let Ok(handle) = winit.window_handle()
+                && let RawWindowHandle::Win32(h) = handle.as_raw()
+            {
+                owner = h.hwnd.get();
+            }
+        });
+    });
+    owner
+}
+
+#[cfg(not(windows))]
+fn handle() -> isize {
+    0
 }
 
 /// Saves the snippets that have a name and some text; half-typed ones wait until they do.

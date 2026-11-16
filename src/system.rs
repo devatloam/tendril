@@ -417,6 +417,42 @@ pub fn pick_folder(owner: isize) -> Option<std::path::PathBuf> {
     }
 }
 
+/// Opens a terminal in `dir`: Windows Terminal (else Command Prompt), macOS's Terminal, or on
+/// Linux $TERMINAL or the first of the usual ones that's installed.
+pub fn terminal(dir: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        if spawn("wt.exe", &["-d", &dir.to_string_lossy()]).is_ok() {
+            return Ok(());
+        }
+        use std::os::windows::process::CommandExt;
+        // A console of its own, which spawn's flags would hide.
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        let child = Command::new("cmd.exe").current_dir(dir).creation_flags(CREATE_NEW_CONSOLE).spawn()?;
+        reap(child);
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        spawn("open", &["-a", "Terminal", &dir.to_string_lossy()])
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let chosen = std::env::var("TERMINAL").ok();
+        let usual = ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "alacritty", "kitty", "foot", "xterm"];
+        for program in chosen.iter().map(String::as_str).chain(usual) {
+            let mut command = Command::new(program);
+            command.current_dir(dir).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+            detach(&mut command);
+            if let Ok(child) = command.spawn() {
+                reap(child);
+                return Ok(());
+            }
+        }
+        Err(io::Error::other("no terminal found; set $TERMINAL to yours"))
+    }
+}
+
 /// What the bin is called here.
 pub fn trash_name() -> &'static str {
     if cfg!(windows) { "Recycle Bin" } else { "Trash" }

@@ -160,6 +160,10 @@ pub struct App {
     aliasing: RefCell<Option<Item>>,
     /// config.toml as it was when last read, to tell on opening whether it needs reading again.
     config_stamp: Cell<Option<config::Stamp>>,
+    /// The text file whose start the details pane shows, and that start.
+    text_shown: RefCell<Option<(PathBuf, String)>>,
+    /// The text file being read for it on another thread.
+    text_reading: RefCell<Option<PathBuf>>,
 }
 
 /// Something the actions panel can do with the selected item.
@@ -184,6 +188,8 @@ enum Act {
     OpenWith(PathBuf),
     /// The file itself on the clipboard, to paste somewhere.
     CopyFile(PathBuf),
+    /// A terminal, in this folder.
+    Terminal(PathBuf),
     /// Your own word for it (the Set Alias view).
     SetAlias,
     /// A file or folder to the Recycle Bin or Trash, after asking.
@@ -245,6 +251,8 @@ impl App {
             recall: Cell::new(None),
             aliasing: RefCell::new(None),
             config_stamp: Cell::new(None),
+            text_shown: RefCell::new(None),
+            text_reading: RefCell::new(None),
         });
         APP.with_borrow_mut(|a| *a = Some(app.clone()));
         app.wire(ui);
@@ -881,7 +889,7 @@ impl App {
         }
         let asking = (query.to_string(), limit);
         if *self.asked_files.borrow() != asking {
-            self.finder.ask(query, limit, self.files.borrow().clone());
+            self.finder.ask(query, limit, self.usage.borrow().recent_files(), self.files.borrow().clone());
             *self.asked_files.borrow_mut() = asking;
         }
         match &*self.found_files.borrow() {
@@ -1772,6 +1780,42 @@ impl App {
             preview,
             preview_width,
             preview_height,
+            text: if item.kind == Kind::File && is_text(item) {
+                item.path.as_deref().map(|p| self.text_preview(p)).unwrap_or_default().into()
+            } else {
+                SharedString::new()
+            },
+        }
+    }
+
+    /// The start of a text file, for the details pane: read on a thread of its own the first
+    /// time it's asked for (the disk might be slow, or a network drive), then shown when it's in.
+    fn text_preview(&self, path: &std::path::Path) -> String {
+        if let Some((p, text)) = &*self.text_shown.borrow()
+            && p == path
+        {
+            return text.clone();
+        }
+        if self.text_reading.borrow().as_deref() == Some(path) {
+            return String::new();
+        }
+        *self.text_reading.borrow_mut() = Some(path.to_path_buf());
+        let path = path.to_path_buf();
+        let _ = std::thread::Builder::new().name("text-preview".into()).spawn(move || {
+            let text = first_lines(&path).unwrap_or_default();
+            let _ = slint::invoke_from_event_loop(move || with_app(|a| a.text_arrived(path, text)));
+        });
+        String::new()
+    }
+
+    fn text_arrived(&self, path: PathBuf, text: String) {
+        self.text_reading.borrow_mut().take();
+        *self.text_shown.borrow_mut() = Some((path.clone(), text));
+        if let Some(ui) = self.ui.upgrade()
+            && self.config.borrow().appearance.details
+            && let Some(item) = self.selected_item().filter(|i| i.path.as_deref() == Some(path.as_path()))
+        {
+            ui.set_detail(self.detail(&item));
         }
     }
 
@@ -2418,6 +2462,10 @@ impl App {
                 self.open_view(View::Alias);
                 ui.invoke_focus_search();
             }
+            Act::Terminal(dir) => match system::terminal(&dir) {
+                Ok(()) => window::hide(ui),
+                Err(e) => self.toast(&format!("Couldn't open a terminal: {e}"), true),
+            },
             Act::CopyFile(path) => match system::copy_file(&path) {
                 Ok(()) => self.toast("Copied. Paste it into a folder or a chat.", false),
                 Err(e) => self.toast(&format!("Couldn't copy it: {e}"), true),
@@ -2544,6 +2592,11 @@ fn actions_for(item: &Item, usage: &Usage) -> Vec<Act> {
         let name = path.file_name().map_or_else(|| item.title.clone(), |n| n.to_string_lossy().into_owned());
         acts.push(Act::Copy("name", name));
         acts.push(Act::CopyFile(path.clone()));
+        // A folder's own; a file's, the one it's in.
+        let folder = if matches!(item.run, Run::Path(_, true)) { Some(path.clone()) } else { path.parent().map(PathBuf::from) };
+        if let Some(folder) = folder {
+            acts.push(Act::Terminal(folder));
+        }
         if system::can_open_with() && !matches!(item.run, Run::Path(_, true)) {
             acts.push(Act::OpenWith(path.clone()));
         }
@@ -2595,12 +2648,94 @@ fn describe(act: &Act, item: &Item, second: bool) -> (String, &'static str, Vec<
         Act::RunAsAdmin(_) => ("Run as Administrator".into(), "open", keys, false),
         Act::OpenWith(_) => ("Open With…".into(), "open", keys, false),
         Act::CopyFile(_) => ("Copy File".into(), "copy", keys, false),
+        Act::Terminal(_) => ("Open in Terminal".into(), "open", keys, false),
         Act::SetAlias => ("Set Alias…".into(), "link", keys, false),
         Act::Trash(_) => (format!("Move to {}", system::trash_name()), "eraser", keys, true),
     }
 }
 
 /// "3 hours ago", from a number of seconds.
+/// A file whose start can be shown as text: by its kind, and not huge.
+fn is_text(item: &Item) -> bool {
+    const TEXT: &[&str] = &[
+        "txt",
+        "md",
+        "markdown",
+        "log",
+        "csv",
+        "tsv",
+        "json",
+        "jsonc",
+        "toml",
+        "yaml",
+        "yml",
+        "ini",
+        "cfg",
+        "conf",
+        "xml",
+        "html",
+        "htm",
+        "css",
+        "scss",
+        "js",
+        "mjs",
+        "ts",
+        "tsx",
+        "jsx",
+        "rs",
+        "py",
+        "rb",
+        "go",
+        "java",
+        "kt",
+        "swift",
+        "c",
+        "h",
+        "cpp",
+        "hpp",
+        "cs",
+        "php",
+        "sql",
+        "sh",
+        "bash",
+        "zsh",
+        "ps1",
+        "bat",
+        "lua",
+        "slint",
+        "svelte",
+        "vue",
+        "env",
+        "gitignore",
+    ];
+    item.path.as_ref().is_some_and(|p| {
+        let ext = p.extension().or(p.file_name()).map(|e| e.to_string_lossy().trim_start_matches('.').to_lowercase()).unwrap_or_default();
+        TEXT.contains(&ext.as_str()) && std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() < 10 * 1024 * 1024)
+    })
+}
+
+/// The first dozen lines of a text file, each kept short; None if it isn't really text.
+fn first_lines(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    let mut start = vec![0u8; 4096];
+    let read = std::fs::File::open(path).ok()?.read(&mut start).ok()?;
+    start.truncate(read);
+    if start.contains(&0) {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&start);
+    let lines: Vec<String> = text
+        .lines()
+        .take(12)
+        .map(|l| {
+            let l = l.replace('\t', "    ");
+            if l.chars().count() > 90 { format!("{}…", l.chars().take(89).collect::<String>()) } else { l }
+        })
+        .collect();
+    let joined = lines.join("\n");
+    (!joined.trim().is_empty()).then_some(joined)
+}
+
 /// A picture Tendril can show in the details pane, and not so big that reading it takes long.
 fn is_picture(item: &Item) -> bool {
     const PICTURES: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"];
@@ -2636,4 +2771,23 @@ fn updated_from() -> Option<String> {
     }
     let _ = std::fs::write(&path, update::VERSION);
     before.filter(|b| !b.is_empty() && b != update::VERSION && update::newer(update::VERSION, b))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn text_starts() {
+        let dir = std::env::temp_dir().join(format!("tendril-text-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let long = "x".repeat(200);
+        let lines: Vec<String> = (0..20).map(|i| if i == 1 { long.clone() } else { format!("line {i}\tend") }).collect();
+        std::fs::write(dir.join("a.txt"), lines.join("\n")).unwrap();
+        std::fs::write(dir.join("b.bin"), [1u8, 0, 2, 3]).unwrap();
+        let shown = super::first_lines(&dir.join("a.txt")).unwrap();
+        assert_eq!(shown.lines().count(), 12);
+        assert_eq!(shown.lines().next(), Some("line 0    end"));
+        assert_eq!(shown.lines().nth(1).unwrap().chars().count(), 90, "long lines are cut");
+        assert!(super::first_lines(&dir.join("b.bin")).is_none(), "not text");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

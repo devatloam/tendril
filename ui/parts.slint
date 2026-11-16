@@ -37,6 +37,8 @@ export struct Detail {
     preview: image,
     preview-width: length,
     preview-height: length,
+    // The first lines of a text file; none when empty.
+    text: string,
 }
 
 export struct ActionRow {
@@ -330,6 +332,26 @@ export component DetailPane inherits Rectangle {
 
         Rectangle {
             height: 4px;
+        }
+
+        if detail.text != "": Rectangle {
+            border-radius: 6px;
+            background: Theme.ink.with-alpha(0.05);
+            clip: true;
+            VerticalLayout {
+                padding: 10px;
+                Text {
+                    text: detail.text;
+                    color: Theme.ink-2;
+                    font-size: 11px;
+                    font-family: Theme.fluent ? "Consolas" : "monospace";
+                    overflow: elide;
+                }
+            }
+        }
+
+        if detail.text != "": Rectangle {
+            height: 6px;
         }
 
         for fact in detail.facts: HorizontalLayout {

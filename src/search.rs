@@ -28,6 +28,8 @@ pub struct Sources<'a> {
     pub files: &'a [Item],
     /// How many files matched in all, of which `files` are the best.
     pub files_total: usize,
+    /// File search hasn't answered for what's typed yet: don't say nothing matched.
+    pub files_pending: bool,
     pub usage: &'a Usage,
     pub aliases: &'a [Alias],
     pub engines: &'a [Engine],
@@ -35,7 +37,7 @@ pub struct Sources<'a> {
 }
 
 pub fn lines(query: &str, s: &Sources, matcher: &mut Matcher) -> Vec<Line> {
-    let Sources { catalog, files, files_total, usage, aliases, engines, links } = *s;
+    let Sources { catalog, files, files_total, files_pending, usage, aliases, engines, links } = *s;
     if crate::paths::is_path(query) {
         let found = crate::paths::entries(query);
         if found.is_empty() {
@@ -91,8 +93,8 @@ pub fn lines(query: &str, s: &Sources, matcher: &mut Matcher) -> Vec<Line> {
     if !matches.is_empty() {
         lines.push(Line::Section("Results".into()));
         lines.extend(matches.into_iter().map(|i| Line::Item(i.clone())));
-    } else if lines.is_empty() && files.is_empty() {
-        lines.push(Line::Empty(format!("No apps or commands match “{}”", shorten(query, 40))));
+    } else if lines.is_empty() && files.is_empty() && !files_pending {
+        lines.push(Line::Empty(format!("Nothing matches “{}”", shorten(query, 40))));
     }
     if !files.is_empty() {
         lines.push(Line::Section("Files".into()));
@@ -278,7 +280,11 @@ mod tests {
 
     fn find(query: &str, catalog: &[Item], usage: &Usage, aliases: &[Alias], links: &[Quicklink]) -> Vec<Line> {
         let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
-        lines(query, &Sources { catalog, files: &[], files_total: 0, usage, aliases, engines: &[], links }, &mut matcher)
+        lines(
+            query,
+            &Sources { catalog, files: &[], files_total: 0, files_pending: false, usage, aliases, engines: &[], links },
+            &mut matcher,
+        )
     }
 
     fn titles(query: &str, usage: &Usage) -> Vec<String> {

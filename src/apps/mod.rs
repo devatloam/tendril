@@ -41,7 +41,7 @@ enum KeptIcon {
     Shell(String),
 }
 
-fn cache_path() -> PathBuf {
+pub fn cache_path() -> PathBuf {
     dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("tendril").join("apps.json")
 }
 

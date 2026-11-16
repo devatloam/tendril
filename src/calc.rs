@@ -8,19 +8,147 @@ pub struct Answer {
     pub plain: String,
 }
 
-/// The answer to `input`, if it's a sum. A lone number isn't one, so typing `42` still searches.
+/// The answer to `input`, if it's a sum or a conversion. A lone number isn't one, so typing `42`
+/// still searches.
 pub fn evaluate(input: &str) -> Option<Answer> {
     let input = input.trim();
-    if input.is_empty() || !looks_like_sum(input) {
+    if input.is_empty() {
         return None;
     }
+    if let Some(answer) = convert(input) {
+        return Some(answer);
+    }
+    if !looks_like_sum(input) {
+        return None;
+    }
+    let value = arithmetic(input)?;
+    Some(Answer { shown: format(value, true), plain: format(value, false) })
+}
+
+fn arithmetic(input: &str) -> Option<f64> {
     let mut parser = Parser { src: input.as_bytes(), pos: 0 };
     let value = parser.expr()?;
     parser.space();
-    if parser.pos != parser.src.len() || !value.is_finite() {
+    (parser.pos == parser.src.len() && value.is_finite()).then_some(value)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Measure {
+    Length,
+    Mass,
+    Volume,
+    Area,
+    Time,
+    Data,
+    Speed,
+    Temperature,
+}
+
+/// A unit: the names it's typed as (the first is how it's shown), what it measures, and how many
+/// of the measure's base unit one of it is. Temperature's base is kelvin, with an offset.
+struct Unit {
+    names: &'static [&'static str],
+    measure: Measure,
+    factor: f64,
+    offset: f64,
+}
+
+const fn unit(names: &'static [&'static str], measure: Measure, factor: f64) -> Unit {
+    Unit { names, measure, factor, offset: 0.0 }
+}
+
+use Measure::*;
+const UNITS: &[Unit] = &[
+    unit(&["mm", "millimeter", "millimeters", "millimetre", "millimetres"], Length, 0.001),
+    unit(&["cm", "centimeter", "centimeters", "centimetre", "centimetres"], Length, 0.01),
+    unit(&["m", "meter", "meters", "metre", "metres"], Length, 1.0),
+    unit(&["km", "kilometer", "kilometers", "kilometre", "kilometres"], Length, 1000.0),
+    unit(&["in", "inch", "inches", "\""], Length, 0.0254),
+    unit(&["ft", "foot", "feet", "'"], Length, 0.3048),
+    unit(&["yd", "yard", "yards"], Length, 0.9144),
+    unit(&["mi", "mile", "miles"], Length, 1609.344),
+    unit(&["nmi", "nautical mile", "nautical miles"], Length, 1852.0),
+    unit(&["mg", "milligram", "milligrams"], Mass, 1e-6),
+    unit(&["g", "gram", "grams"], Mass, 0.001),
+    unit(&["kg", "kilogram", "kilograms", "kilo", "kilos"], Mass, 1.0),
+    unit(&["t", "tonne", "tonnes"], Mass, 1000.0),
+    unit(&["oz", "ounce", "ounces"], Mass, 0.028349523125),
+    unit(&["lb", "lbs", "pound", "pounds"], Mass, 0.45359237),
+    unit(&["st", "stone", "stones"], Mass, 6.35029318),
+    unit(&["ml", "milliliter", "milliliters", "millilitre", "millilitres"], Volume, 0.001),
+    unit(&["cl", "centiliter", "centiliters", "centilitre", "centilitres"], Volume, 0.01),
+    unit(&["l", "liter", "liters", "litre", "litres"], Volume, 1.0),
+    unit(&["tsp", "teaspoon", "teaspoons"], Volume, 0.00492892159375),
+    unit(&["tbsp", "tablespoon", "tablespoons"], Volume, 0.01478676478125),
+    unit(&["floz", "fl oz", "fluid ounce", "fluid ounces"], Volume, 0.0295735295625),
+    unit(&["cup", "cups"], Volume, 0.2365882365),
+    unit(&["pt", "pint", "pints"], Volume, 0.473176473),
+    unit(&["gal", "gallon", "gallons"], Volume, 3.785411784),
+    unit(&["m2", "m²", "square meter", "square meters", "square metre", "square metres", "sqm"], Area, 1.0),
+    unit(&["km2", "km²", "square kilometer", "square kilometers", "square kilometre", "square kilometres"], Area, 1e6),
+    unit(&["ft2", "ft²", "square foot", "square feet", "sqft"], Area, 0.09290304),
+    unit(&["ha", "hectare", "hectares"], Area, 10_000.0),
+    unit(&["acre", "acres"], Area, 4046.8564224),
+    unit(&["ms", "millisecond", "milliseconds"], Time, 0.001),
+    unit(&["s", "sec", "secs", "second", "seconds"], Time, 1.0),
+    unit(&["min", "mins", "minute", "minutes"], Time, 60.0),
+    unit(&["h", "hr", "hrs", "hour", "hours"], Time, 3600.0),
+    unit(&["d", "day", "days"], Time, 86_400.0),
+    unit(&["wk", "week", "weeks"], Time, 604_800.0),
+    unit(&["yr", "year", "years"], Time, 31_557_600.0),
+    unit(&["bit", "bits"], Data, 0.125),
+    unit(&["B", "byte", "bytes"], Data, 1.0),
+    unit(&["KB", "kb", "kilobyte", "kilobytes"], Data, 1e3),
+    unit(&["MB", "mb", "megabyte", "megabytes"], Data, 1e6),
+    unit(&["GB", "gb", "gigabyte", "gigabytes"], Data, 1e9),
+    unit(&["TB", "tb", "terabyte", "terabytes"], Data, 1e12),
+    unit(&["KiB", "kib", "kibibyte", "kibibytes"], Data, 1024.0),
+    unit(&["MiB", "mib", "mebibyte", "mebibytes"], Data, 1_048_576.0),
+    unit(&["GiB", "gib", "gibibyte", "gibibytes"], Data, 1_073_741_824.0),
+    unit(&["TiB", "tib", "tebibyte", "tebibytes"], Data, 1_099_511_627_776.0),
+    unit(&["m/s", "mps"], Speed, 1.0),
+    unit(&["km/h", "kmh", "kph"], Speed, 1.0 / 3.6),
+    unit(&["mph"], Speed, 0.44704),
+    unit(&["kn", "knot", "knots"], Speed, 0.514444),
+    Unit { names: &["°C", "c", "celsius", "°c"], measure: Temperature, factor: 1.0, offset: 273.15 },
+    Unit { names: &["°F", "f", "fahrenheit", "°f"], measure: Temperature, factor: 5.0 / 9.0, offset: 459.67 },
+    Unit { names: &["K", "k", "kelvin"], measure: Temperature, factor: 1.0, offset: 0.0 },
+];
+
+fn find_unit(name: &str) -> Option<&'static Unit> {
+    let name = name.trim().trim_start_matches("degrees ").trim_start_matches("degree ");
+    // Exact first, so "MB" and "mb" both work and "B" isn't "b".
+    UNITS.iter().find(|u| u.names.contains(&name)).or_else(|| UNITS.iter().find(|u| u.names.iter().any(|n| n.eq_ignore_ascii_case(name))))
+}
+
+/// `5 km in miles`, `72 f to c`, `2 gb as mb`, `(3+4) hours -> min`: the amount in the other unit.
+fn convert(input: &str) -> Option<Answer> {
+    let (left, target) =
+        [" in ", " to ", " as ", " -> ", "->"].iter().filter_map(|sep| input.rsplit_once(sep)).max_by_key(|(l, _)| l.len())?;
+    let to = find_unit(target)?;
+    // The amount, then the unit: the unit is what follows the last digit or bracket.
+    let left = left.trim();
+    let cut = left.rfind(|c: char| c.is_ascii_digit() || c == ')' || c == '.')? + 1;
+    let (amount, from) = (left[..cut].trim(), left[cut..].trim());
+    let from = find_unit(from)?;
+    if from.measure != to.measure {
         return None;
     }
-    Some(Answer { shown: format(value, true), plain: format(value, false) })
+    let amount = if amount.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '_') {
+        amount.replace('_', "").parse().ok()?
+    } else {
+        arithmetic(amount)?
+    };
+    let base = (amount + from.offset) * from.factor;
+    let value = base / to.factor - to.offset;
+    if !value.is_finite() {
+        return None;
+    }
+    // Six decimals is plenty for a conversion; more is noise.
+    let value = (value * 1e6).round() / 1e6;
+    let name = to.names[0];
+    let sep = if name.starts_with('°') { "" } else { " " };
+    Some(Answer { shown: format!("{}{sep}{name}", format(value, true)), plain: format(value, false) })
 }
 
 fn looks_like_sum(s: &str) -> bool {
@@ -206,6 +334,24 @@ mod tests {
         assert_eq!(shown("2 × 3").as_deref(), Some("6"));
         assert_eq!(shown("(2+3").as_deref(), Some("5"));
         assert_eq!(evaluate("0.1+0.2").map(|a| a.plain).as_deref(), Some("0.3"));
+    }
+
+    #[test]
+    fn conversions() {
+        assert_eq!(shown("5 km in miles").as_deref(), Some("3.106856 mi"));
+        assert_eq!(shown("72 f to c").as_deref(), Some("22.222222°C"));
+        assert_eq!(shown("100 c to f").as_deref(), Some("212°F"));
+        assert_eq!(shown("0 k in c").as_deref(), Some("-273.15°C"));
+        assert_eq!(shown("2 GB in MB").as_deref(), Some("2,000 MB"));
+        assert_eq!(shown("1 GiB to MiB").as_deref(), Some("1,024 MiB"));
+        assert_eq!(shown("90 min in hours").as_deref(), Some("1.5 h"));
+        assert_eq!(shown("6 ft to cm").as_deref(), Some("182.88 cm"));
+        assert_eq!(shown("(2+3)kg in lb").as_deref(), Some("11.023113 lb"));
+        assert_eq!(shown("100 km/h to mph").as_deref(), Some("62.137119 mph"));
+        assert_eq!(evaluate("5 km in miles").map(|a| a.plain).as_deref(), Some("3.106856"));
+        assert!(evaluate("5 km in kg").is_none(), "different measures");
+        assert!(evaluate("log in to github").is_none());
+        assert!(evaluate("photos in 2024").is_none());
     }
 
     #[test]

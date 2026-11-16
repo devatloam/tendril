@@ -92,6 +92,8 @@ pub struct App {
     shown_actions: RefCell<Vec<usize>>,
     action_rows: Rc<VecModel<ActionRow>>,
     pending: RefCell<Option<Item>>,
+    /// A file waiting for "Move" in the confirm dialog, to go to the Recycle Bin or Trash.
+    pending_trash: RefCell<Option<PathBuf>>,
     /// A setting change waiting for "Turn On" in the GPU dialog: its key and direction.
     pending_setting: Cell<Option<(&'static str, i32)>>,
     toast_timer: Timer,
@@ -157,6 +159,12 @@ enum Act {
     /// Windows: start the program elevated.
     #[cfg_attr(not(windows), allow(dead_code))]
     RunAsAdmin(PathBuf),
+    /// A file, with the system's "Open with" dialog.
+    OpenWith(PathBuf),
+    /// The file itself on the clipboard, to paste somewhere.
+    CopyFile(PathBuf),
+    /// A file or folder to the Recycle Bin or Trash, after asking.
+    Trash(PathBuf),
 }
 
 impl App {
@@ -180,6 +188,7 @@ impl App {
             shown_actions: RefCell::default(),
             action_rows,
             pending: RefCell::default(),
+            pending_trash: RefCell::default(),
             pending_setting: Cell::new(None),
             toast_timer: Timer::default(),
             scanned_at: Cell::new(None),
@@ -580,6 +589,7 @@ impl App {
         ui.set_about_open(false);
         self.pending.take();
         self.pending_setting.take();
+        self.pending_trash.take();
     }
 
     /// Looks for installed apps on a background thread; the list updates when it's done.
@@ -622,6 +632,7 @@ impl App {
         let mut catalog = self.apps.borrow().clone();
         catalog.extend(crate::catalog::commands());
         catalog.extend(crate::catalog::quicklinks(&self.config.borrow().quicklink));
+        catalog.extend(crate::snippets::items(&self.config.borrow().snippet));
         *self.browser.borrow_mut() = crate::browser::icon(&catalog);
         for item in &mut catalog {
             self.decorate(item);
@@ -707,6 +718,8 @@ impl App {
         let files = self.config.borrow().files.clone();
         *self.indexed_with.borrow_mut() = Some(files.clone());
         if !files.index {
+            // Off means nothing kept about your files either.
+            let _ = crate::files::forget();
             crate::files::set_off();
             *self.files.borrow_mut() = crate::files::Index::default();
             if tell {
@@ -716,8 +729,75 @@ impl App {
         }
         self.indexed_at.set(Some(Instant::now()));
         self.tell_indexed.set(self.tell_indexed.get() || tell);
-        crate::files::start(files, || with_app(|a| a.files_progress()), |index| with_app(|a| a.files_indexed(index)));
+        // Nothing in memory yet (just started): last run's index meanwhile.
+        let cached: Option<fn(crate::files::Index)> =
+            (self.files.borrow().len() == 0).then_some(|index| with_app(|a| a.files_cached(index)));
+        crate::files::start(files, cached, || with_app(|a| a.files_progress()), |index| with_app(|a| a.files_indexed(index)));
         self.set_busy(true);
+    }
+
+    /// Deletes something Tendril keeps (Settings' Privacy & Data tab), on disk and in memory.
+    /// "all" is everything but your settings. Says what was done.
+    pub fn delete_data(&self, key: &str) -> Result<String, String> {
+        let gone = |r: std::io::Result<()>| match r {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        };
+        let said = match key {
+            "ranking" => {
+                let mut usage = self.usage.borrow_mut();
+                usage.forget_all();
+                usage.save();
+                self.usage_changed.set(false);
+                "Ranking reset. Favourites stay pinned."
+            }
+            "clipboard" => {
+                let mut history = self.history.borrow_mut();
+                history.clips.clear();
+                history.save();
+                "Clipboard history cleared."
+            }
+            "files" => {
+                crate::files::forget().map_err(|e| e.to_string())?;
+                *self.files.borrow_mut() = crate::files::Index::default();
+                *self.indexed_with.borrow_mut() = None;
+                self.indexed_at.set(None);
+                "File index deleted. It's made again the next time Tendril opens."
+            }
+            "apps" => {
+                gone(std::fs::remove_file(apps::cache_path()))?;
+                "App list deleted. It's made again on the next start."
+            }
+            "icons" => {
+                crate::sites::forget().map_err(|e| e.to_string())?;
+                self.rebuild_catalog();
+                "Website icons deleted."
+            }
+            "all" => {
+                for key in ["ranking", "clipboard", "files", "apps", "icons"] {
+                    self.delete_data(key)?;
+                }
+                "Everything but your settings deleted."
+            }
+            _ => return Err(format!("nothing called {key}")),
+        };
+        if let Some(ui) = self.ui.upgrade() {
+            self.refresh(&ui.get_query());
+        }
+        Ok(said.into())
+    }
+
+    /// Last run's index, while the walk runs. Only taken if the walk hasn't finished first.
+    fn files_cached(&self, index: crate::files::Index) {
+        if crate::files::walking() && self.files.borrow().len() == 0 {
+            *self.files.borrow_mut() = index;
+            if let Some(ui) = self.ui.upgrade()
+                && !ui.get_query().is_empty()
+            {
+                let keep = self.selected_item().map(|i| i.id);
+                self.refresh_keeping(&ui.get_query(), keep.as_deref());
+            }
+        }
     }
 
     /// A few times a second while the walk runs: the count, where it's shown.
@@ -1771,6 +1851,18 @@ impl App {
                     Err(e) => Err(e),
                 }
             }
+            Run::Snippet(text) => {
+                let text = crate::snippets::expand(text, clipboard::read().as_deref());
+                match system::copy(&text) {
+                    Ok(()) if clipboard::can_paste() => {
+                        window::hide(&ui);
+                        clipboard::paste_soon();
+                        Ok(Done::Stay)
+                    }
+                    Ok(()) => Ok(Done::Toast("Copied. Paste it where you like.".into(), true)),
+                    Err(e) => Err(e),
+                }
+            }
             Run::Window(id) => match switcher::focus(*id) {
                 Ok(()) => Ok(Done::Hide),
                 Err(e) => Err(e),
@@ -1845,6 +1937,19 @@ impl App {
         if let Some((key, delta)) = self.pending_setting.take() {
             if yes {
                 self.apply_setting(key, delta);
+            }
+            return;
+        }
+        if let Some(path) = self.pending_trash.take() {
+            if yes {
+                match system::trash(&path) {
+                    Ok(()) => {
+                        self.files.borrow_mut().remove(&path);
+                        self.toast(&format!("Moved to the {}", system::trash_name()), false);
+                        self.refresh(&ui.get_query());
+                    }
+                    Err(e) => self.toast(&format!("Couldn't move it: {e}"), true),
+                }
             }
             return;
         }
@@ -1969,6 +2074,25 @@ impl App {
             },
             #[cfg(not(windows))]
             Act::RunAsAdmin(_) => {}
+            Act::OpenWith(path) => match system::open_with(&path) {
+                Ok(()) => window::hide(ui),
+                Err(e) => self.toast(&format!("Couldn't open it: {e}"), true),
+            },
+            Act::CopyFile(path) => match system::copy_file(&path) {
+                Ok(()) => self.toast("Copied. Paste it into a folder or a chat.", false),
+                Err(e) => self.toast(&format!("Couldn't copy it: {e}"), true),
+            },
+            Act::Trash(path) => {
+                let name = path.file_name().map_or_else(|| path.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned());
+                ui.set_confirm_title(format!("Move to {}?", system::trash_name()).into());
+                ui.set_confirm_message(format!("“{name}” goes to the {}, where you can get it back from.", system::trash_name()).into());
+                ui.set_confirm_label("Move".into());
+                ui.set_confirm_danger(true);
+                ui.set_confirm_icon(self.icons.borrow_mut().builtin_solid("eraser"));
+                *self.pending_trash.borrow_mut() = Some(path);
+                ui.set_actions_open(false);
+                ui.set_confirm_open(true);
+            }
             Act::CopyClip(id) => {
                 let text = self.history.borrow().get(id).map(|c| c.text.clone());
                 match text.map(|t| system::copy(&t)) {
@@ -2074,6 +2198,17 @@ fn actions_for(item: &Item, usage: &Usage) -> Vec<Act> {
         acts.push(Act::Reveal(path.clone()));
         acts.push(Act::Copy("path", path.to_string_lossy().into_owned()));
     }
+    if item.kind == Kind::File
+        && let Some(path) = &item.path
+    {
+        let name = path.file_name().map_or_else(|| item.title.clone(), |n| n.to_string_lossy().into_owned());
+        acts.push(Act::Copy("name", name));
+        acts.push(Act::CopyFile(path.clone()));
+        if system::can_open_with() && !matches!(item.run, Run::Path(_, true)) {
+            acts.push(Act::OpenWith(path.clone()));
+        }
+        acts.push(Act::Trash(path.clone()));
+    }
     #[cfg(windows)]
     if item.kind == Kind::Application
         && let Some(path) = &item.path
@@ -2081,7 +2216,7 @@ fn actions_for(item: &Item, usage: &Usage) -> Vec<Act> {
     {
         acts.push(Act::RunAsAdmin(path.clone()));
     }
-    if matches!(item.kind, Kind::Application | Kind::Command | Kind::Link) && !item.id.starts_with("cmd:ms-settings") {
+    if matches!(item.kind, Kind::Application | Kind::Command | Kind::Link | Kind::Snippet) && !item.id.starts_with("cmd:ms-settings") {
         acts.push(Act::Pin(usage.is_pinned(&item.id)));
     }
     if item.kind == Kind::Application || item.kind == Kind::Command {
@@ -2111,6 +2246,9 @@ fn describe(act: &Act, item: &Item, second: bool) -> (String, &'static str, Vec<
         Act::Pin(false) => ("Add to Favourites".into(), "star", keys, false),
         Act::Pin(true) => ("Remove from Favourites".into(), "star", keys, false),
         Act::RunAsAdmin(_) => ("Run as Administrator".into(), "open", keys, false),
+        Act::OpenWith(_) => ("Open With…".into(), "open", keys, false),
+        Act::CopyFile(_) => ("Copy File".into(), "copy", keys, false),
+        Act::Trash(_) => (format!("Move to {}", system::trash_name()), "eraser", keys, true),
     }
 }
 

@@ -4,7 +4,7 @@
 //! launcher's Appearance view applies them.
 
 use crate::app::with_app;
-use crate::{Choice, ChoiceGroup, Entry, Look, SettingsWindow, Theme, appearance, config, hotkey, palettes, system, update};
+use crate::{Choice, ChoiceGroup, Entry, Look, SettingsWindow, Stored, Theme, appearance, config, hotkey, palettes, system, update};
 use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
@@ -34,10 +34,13 @@ thread_local! {
     /// The lists as they're being edited; written to config.toml on every change.
     static ENGINES: RefCell<Vec<config::Engine>> = const { RefCell::new(Vec::new()) };
     static LINKS: RefCell<Vec<config::Quicklink>> = const { RefCell::new(Vec::new()) };
+    static SNIPPETS: RefCell<Vec<config::Snippet>> = const { RefCell::new(Vec::new()) };
     /// File search's folders and patterns, as they're being edited.
     static FILE_LISTS: RefCell<FileLists> = const { RefCell::new(FileLists { folders: Vec::new(), include: Vec::new(), exclude: Vec::new(), exclude_regex: Vec::new() }) };
     /// A change waiting for "Turn On" in the GPU question.
     static PENDING: Cell<Option<(&'static str, i32)>> = const { Cell::new(None) };
+    /// Something kept, waiting for "Delete" in the confirm dialog.
+    static PENDING_DELETE: Cell<Option<&'static str>> = const { Cell::new(None) };
 }
 
 struct FileLists {
@@ -59,8 +62,27 @@ impl FileLists {
     }
 }
 
-/// Opens the window at a tab (0 General … 5 Files, 6 About), or brings it forward if it's open.
+/// Where the window was and how big, when it was last closed: "x y width height", in pixels.
+fn place_path() -> std::path::PathBuf {
+    dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("tendril").join("settings-window")
+}
+
+fn saved_place() -> Option<(i32, i32, u32, u32)> {
+    let text = std::fs::read_to_string(place_path()).ok()?;
+    let mut n = text.split_whitespace();
+    Some((n.next()?.parse().ok()?, n.next()?.parse().ok()?, n.next()?.parse().ok()?, n.next()?.parse().ok()?))
+}
+
+fn save_place(w: &SettingsWindow) {
+    let (at, size) = (w.window().position(), w.window().size());
+    if size.width > 0 && size.height > 0 {
+        let _ = std::fs::write(place_path(), format!("{} {} {} {}", at.x, at.y, size.width, size.height));
+    }
+}
+
+/// Opens the window at a tab (0 General … 8 About), or brings it forward if it's open.
 pub fn open(tab: i32) {
+    let mut fresh = false;
     let made = WINDOW.with_borrow_mut(|slot| {
         if slot.is_none() {
             match crate::window::plain(SettingsWindow::new) {
@@ -71,6 +93,7 @@ pub fn open(tab: i32) {
                     w.set_top_inset(inset);
                     wire(&w);
                     *slot = Some(w);
+                    fresh = true;
                 }
                 Err(e) => {
                     eprintln!("tendril: couldn't open settings: {e}");
@@ -83,9 +106,14 @@ pub fn open(tab: i32) {
     if !made {
         return;
     }
+    let place = if fresh { saved_place() } else { None };
     with_window(|w| {
         w.set_tab(tab);
         fill(w);
+        // The size it was left at; the place is set once the system has made the window.
+        if let Some((_, _, width, height)) = place {
+            w.window().set_size(slint::PhysicalSize::new(width, height));
+        }
         if let Err(e) = w.show() {
             eprintln!("tendril: couldn't show settings: {e}");
         }
@@ -94,12 +122,25 @@ pub fn open(tab: i32) {
             if let Some(w) = weak.upgrade()
                 && let Ok(winit) = w.window().winit_window().await
             {
-                // In the middle of the screen, where the system might put it anywhere.
-                if let Some(monitor) = winit.current_monitor().or_else(|| winit.primary_monitor()) {
+                use slint::winit_030::winit::dpi::PhysicalPosition;
+                // Where it was left, if that's still on a screen (one may have been unplugged).
+                let on_screen = |x: i32, y: i32| {
+                    winit.available_monitors().any(|m| {
+                        let (at, size) = (m.position(), m.size());
+                        x + 40 >= at.x && x + 40 < at.x + size.width as i32 && y >= at.y && y + 20 < at.y + size.height as i32
+                    })
+                };
+                if let Some((x, y, _, _)) = place
+                    && on_screen(x, y)
+                {
+                    winit.set_outer_position(PhysicalPosition::new(x, y));
+                } else if fresh && let Some(monitor) = winit.current_monitor().or_else(|| winit.primary_monitor()) {
+                    // In the middle of the screen, where the system might put it anywhere. One
+                    // already open stays where it is.
                     let (at, screen, size) = (monitor.position(), monitor.size(), winit.outer_size());
                     let x = at.x + (screen.width as i32 - size.width as i32) / 2;
                     let y = at.y + (screen.height as i32 - size.height as i32) / 2;
-                    winit.set_outer_position(slint::winit_030::winit::dpi::PhysicalPosition::new(x, y));
+                    winit.set_outer_position(PhysicalPosition::new(x, y));
                 }
                 crate::window::round(&winit);
                 #[cfg(windows)]
@@ -136,6 +177,7 @@ fn close() {
         if w.get_recording() {
             with_app(|a| a.pause_shortcut(false));
         }
+        save_place(w);
         let _ = w.hide();
     });
     slint::Timer::single_shot(std::time::Duration::ZERO, || {
@@ -157,6 +199,10 @@ fn fill(w: &SettingsWindow) {
 
     ENGINES.with_borrow_mut(|e| *e = config.search.clone());
     LINKS.with_borrow_mut(|l| *l = config.quicklink.clone());
+    // Shown on one line: a new line written in the file shows as \n.
+    SNIPPETS.with_borrow_mut(|s| {
+        *s = config.snippet.iter().map(|s| config::Snippet { text: s.text.replace('\n', "\\n"), ..s.clone() }).collect()
+    });
     let f = &config.files;
     FILE_LISTS.with_borrow_mut(|l| {
         *l = FileLists {
@@ -167,8 +213,78 @@ fn fill(w: &SettingsWindow) {
         }
     });
     show_lists(w);
+    show_stored(w);
     w.set_version(update::VERSION.into());
     theme(w);
+}
+
+/// Privacy & Data: what's kept, where, and how big.
+fn show_stored(w: &SettingsWindow) {
+    let stored: Vec<Stored> = crate::data::kept()
+        .into_iter()
+        .map(|k| Stored {
+            key: k.key.into(),
+            title: k.title.into(),
+            about: k.about.into(),
+            path: k.path.to_string_lossy().as_ref().into(),
+            size: crate::data::human(crate::data::size(&k.path)).into(),
+            action: k.action.unwrap_or_default().into(),
+        })
+        .collect();
+    w.set_stored(ModelRc::new(VecModel::from(stored)));
+    let ranking = crate::usage::path();
+    w.set_ranking_path(ranking.to_string_lossy().as_ref().into());
+    w.set_ranking_size(crate::data::human(crate::data::size(&ranking)).into());
+}
+
+/// Where a kept thing is, for Show.
+fn stored_path(key: &str) -> Option<std::path::PathBuf> {
+    if key == "ranking" {
+        return Some(crate::usage::path());
+    }
+    crate::data::kept().into_iter().find(|k| k.key == key).map(|k| k.path)
+}
+
+/// Asks before deleting something kept; `answer` does it.
+fn ask_delete(key: &str) {
+    let (key, title, message, label): (&'static str, &str, &str, &str) = match key {
+        "ranking" => (
+            "ranking",
+            "Reset ranking?",
+            "Tendril forgets what you've opened and what you picked for each search, so results go back to being ordered by name. Your favourites stay pinned.",
+            "Reset",
+        ),
+        "clipboard" => {
+            ("clipboard", "Clear clipboard history?", "Everything you've copied is deleted from Tendril. This can't be undone.", "Clear")
+        }
+        "files" => (
+            "files",
+            "Delete the file index?",
+            "File search finds nothing until Tendril looks through your folders again, the next time it opens.",
+            "Delete",
+        ),
+        "apps" => {
+            ("apps", "Delete the app list?", "Your apps are found again on the next start. Until then the list stays as it is.", "Delete")
+        }
+        "icons" => ("icons", "Delete website icons?", "Quicklinks show a plain icon until theirs are fetched again.", "Delete"),
+        "all" => (
+            "all",
+            "Delete everything but settings?",
+            "Ranking, clipboard history, the file index, the app list and website icons are deleted. Your settings and favourites stay.",
+            "Delete",
+        ),
+        _ => return,
+    };
+    with_window(|w| {
+        w.set_confirm_title(title.into());
+        w.set_confirm_message(message.into());
+        w.set_confirm_label(label.into());
+        w.set_confirm_danger(true);
+        let mut icons = crate::icons::Icons::default();
+        w.set_confirm_icon(icons.builtin_solid("eraser"));
+        w.set_confirm_open(true);
+    });
+    PENDING_DELETE.set(Some(key));
 }
 
 /// The setting rows on the General, Look and Layout tabs.
@@ -215,6 +331,10 @@ fn show_lists(w: &SettingsWindow) {
     });
     w.set_engines(ModelRc::new(VecModel::from(engines)));
     w.set_links(ModelRc::new(VecModel::from(links)));
+    let snippets: Vec<Entry> = SNIPPETS.with_borrow(|s| {
+        s.iter().map(|s| Entry { name: s.name.as_str().into(), keyword: s.keyword.as_str().into(), url: s.text.as_str().into() }).collect()
+    });
+    w.set_snippets(ModelRc::new(VecModel::from(snippets)));
     let model = |list: &[String]| -> ModelRc<SharedString> {
         ModelRc::new(VecModel::from(list.iter().map(|s| s.as_str().into()).collect::<Vec<SharedString>>()))
     };
@@ -356,6 +476,31 @@ fn wire(w: &SettingsWindow) {
         save_links();
         with_window(show_lists);
     });
+    w.on_snippet_edited(|i, field, text| {
+        SNIPPETS.with_borrow_mut(|snippets| {
+            if let Some(s) = snippets.get_mut(i as usize) {
+                match field.as_str() {
+                    "name" => s.name = text.to_string(),
+                    "keyword" => s.keyword = text.to_string(),
+                    _ => s.text = text.to_string(),
+                }
+            }
+        });
+        save_snippets();
+    });
+    w.on_snippet_add(|| {
+        SNIPPETS.with_borrow_mut(|s| s.push(config::Snippet { name: String::new(), keyword: String::new(), text: String::new() }));
+        with_window(show_lists);
+    });
+    w.on_snippet_remove(|i| {
+        SNIPPETS.with_borrow_mut(|s| {
+            if (i as usize) < s.len() {
+                s.remove(i as usize);
+            }
+        });
+        save_snippets();
+        with_window(show_lists);
+    });
     w.on_list_edited(|name, i, text| {
         let Some(name) = list_name(&name) else { return };
         FILE_LISTS.with_borrow_mut(|l| {
@@ -386,6 +531,28 @@ fn wire(w: &SettingsWindow) {
         save_file_list(name);
         with_window(show_lists);
     });
+    w.on_pick_folder(|| {
+        let owner = handle();
+        let _ = std::thread::Builder::new().name("folder-picker".into()).spawn(move || {
+            let Some(path) = system::pick_folder(owner) else { return };
+            let _ = slint::invoke_from_event_loop(move || {
+                let shown = crate::paths::shorten_home(&path);
+                let added = FILE_LISTS.with_borrow_mut(|l| {
+                    let folders = &mut l.folders;
+                    folders.retain(|f| !f.trim().is_empty());
+                    let new = !folders.iter().any(|f| crate::paths::expand(f) == path);
+                    if new {
+                        folders.push(shown);
+                    }
+                    new
+                });
+                if added {
+                    save_file_list("folders");
+                }
+                with_window(show_lists);
+            });
+        });
+    });
     w.on_index_now(|| {
         with_app(|a| a.index_files(true));
         show_files_status();
@@ -403,6 +570,48 @@ fn wire(w: &SettingsWindow) {
         {
             apply(key, delta);
         }
+        if let Some(key) = PENDING_DELETE.take()
+            && yes
+        {
+            let mut result = Err(String::from("Tendril isn't running"));
+            with_app(|a| result = a.delete_data(key));
+            with_window(|w| {
+                w.set_data_note(result.unwrap_or_else(|e| format!("Couldn't delete it: {e}")).into());
+                show_stored(w);
+                w.set_files_status(crate::files::status().into());
+            });
+        }
+    });
+    w.on_data_show(|key| {
+        let Some(path) = stored_path(&key) else { return };
+        // A file is shown selected in its folder; a folder (or a file not made yet) is opened.
+        let shown = if path.is_file() {
+            system::reveal(&path)
+        } else {
+            let folder = if path.is_dir() { path } else { path.parent().map(|p| p.to_path_buf()).unwrap_or(path) };
+            let _ = std::fs::create_dir_all(&folder);
+            system::open(&folder.to_string_lossy())
+        };
+        if let Err(e) = shown {
+            with_window(|w| w.set_data_note(format!("Couldn't show it: {e}").into()));
+        }
+    });
+    w.on_data_delete(|key| ask_delete(&key));
+    w.on_resize(|dir| {
+        use slint::winit_030::winit::window::ResizeDirection as R;
+        let direction = match dir.as_str() {
+            "n" => R::North,
+            "s" => R::South,
+            "e" => R::East,
+            "w" => R::West,
+            "ne" => R::NorthEast,
+            "nw" => R::NorthWest,
+            "se" => R::SouthEast,
+            _ => R::SouthWest,
+        };
+        with_window(|w| {
+            let _ = w.window().with_winit_window(|winit| winit.drag_resize_window(direction));
+        });
     });
 }
 
@@ -422,6 +631,7 @@ fn choose(key: &str, index: i32) {
             w.set_confirm_title("Draw with the GPU?".into());
             w.set_confirm_message(message.into());
             w.set_confirm_label("Turn On".into());
+            w.set_confirm_danger(false);
             let mut icons = crate::icons::Icons::default();
             w.set_confirm_icon(icons.builtin_solid(icon));
             w.set_confirm_open(true);
@@ -471,6 +681,49 @@ fn save_links() {
         })
         .collect();
     if let Err(e) = config::set_list("quicklink", &entries) {
+        with_window(|w| w.set_update_note(format!("Couldn't save: {e}").into()));
+    }
+    with_app(|a| a.settings_changed());
+}
+
+/// The window's handle, so the folder picker opens in front of it (Windows); 0 elsewhere.
+#[cfg(windows)]
+fn handle() -> isize {
+    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let mut owner = 0;
+    with_window(|w| {
+        let _ = w.window().with_winit_window(|winit| {
+            if let Ok(handle) = winit.window_handle()
+                && let RawWindowHandle::Win32(h) = handle.as_raw()
+            {
+                owner = h.hwnd.get();
+            }
+        });
+    });
+    owner
+}
+
+#[cfg(not(windows))]
+fn handle() -> isize {
+    0
+}
+
+/// Saves the snippets that have a name and some text; half-typed ones wait until they do.
+fn save_snippets() {
+    let snippets = SNIPPETS.with_borrow(|s| s.clone());
+    let entries: Vec<Vec<(&str, config::Value)>> = snippets
+        .iter()
+        .filter(|s| !s.name.trim().is_empty() && !s.text.is_empty())
+        .map(|s| {
+            let mut entry = vec![("name", config::Value::Text(s.name.trim()))];
+            if !s.keyword.trim().is_empty() {
+                entry.push(("keyword", config::Value::Text(s.keyword.trim())));
+            }
+            entry.push(("text", config::Value::Text(&s.text)));
+            entry
+        })
+        .collect();
+    if let Err(e) = config::set_list("snippet", &entries) {
         with_window(|w| w.set_update_note(format!("Couldn't save: {e}").into()));
     }
     with_app(|a| a.settings_changed());

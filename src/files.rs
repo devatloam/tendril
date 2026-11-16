@@ -267,7 +267,9 @@ fn walk(files: &Files, progress: Option<fn()>) -> (Index, bool, Vec<String>) {
 
 /// Starts a walk on its own thread, unless one is under way. `progress` is called on the UI
 /// thread now and then while it runs, `done` once with the new index.
-pub fn start(files: Files, progress: fn(), done: fn(Index)) {
+/// `cached`, when given, gets the index kept from last time first, so file search works while
+/// the folders are walked again.
+pub fn start(files: Files, cached: Option<fn(Index)>, progress: fn(), done: fn(Index)) {
     {
         let mut state = STATE.lock().unwrap();
         if matches!(*state, State::Walking) {
@@ -277,9 +279,15 @@ pub fn start(files: Files, progress: fn(), done: fn(Index)) {
     }
     FOUND.store(0, Ordering::Relaxed);
     let spawned = std::thread::Builder::new().name("files".into()).spawn(move || {
+        if let Some(cached) = cached
+            && let Some(index) = load(&cache_path())
+        {
+            let _ = slint::invoke_from_event_loop(move || cached(index));
+        }
         let started = Instant::now();
         let (index, full, problems) = walk(&files, Some(progress));
         let count = index.entries.len();
+        save(&index, &cache_path());
         *STATE.lock().unwrap() = State::Done { count, at: SystemTime::now(), took: started.elapsed(), full, problems };
         let _ = slint::invoke_from_event_loop(move || done(index));
     });
@@ -288,9 +296,61 @@ pub fn start(files: Files, progress: fn(), done: fn(Index)) {
     }
 }
 
+/// The index as kept between runs: a path a line, "d" or "f" and a tab before it.
+pub fn cache_path() -> PathBuf {
+    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("tendril").join("files.txt")
+}
+
+fn save(index: &Index, path: &Path) {
+    let mut text = String::with_capacity(index.entries.len() * 80);
+    for e in &index.entries {
+        // A path that isn't valid Unicode can't be written as text; it's found on the next walk.
+        if let Some(p) = e.path.to_str() {
+            text.push(if e.dir { 'd' } else { 'f' });
+            text.push('\t');
+            text.push_str(p);
+            text.push('\n');
+        }
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, text);
+}
+
+fn load(path: &Path) -> Option<Index> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let entries: Vec<Entry> = text
+        .lines()
+        .filter_map(|line| {
+            let (kind, path) = line.split_once('\t')?;
+            let path = PathBuf::from(path);
+            let name = path.file_name()?.to_string_lossy().to_lowercase().into_boxed_str();
+            Some(Entry { name, path, dir: kind == "d" })
+        })
+        .collect();
+    (!entries.is_empty()).then_some(Index { entries })
+}
+
+/// Deletes the kept index; the next walk starts it again.
+pub fn forget() -> std::io::Result<()> {
+    if !walking() {
+        *STATE.lock().unwrap() = State::Never;
+    }
+    match std::fs::remove_file(cache_path()) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 impl Index {
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Forgets a file or folder (and what's in it) that Tendril moved to the bin.
+    pub fn remove(&mut self, path: &Path) {
+        self.entries.retain(|e| !e.path.starts_with(path));
     }
 
     /// The best matches for what's typed: every word somewhere in the name, names that start
@@ -401,6 +461,20 @@ mod tests {
         assert_eq!(titles, ["report.pdf", "report-draft.docx"]);
         assert_eq!(index.find("draft rep").len(), 1, "every word, in any order");
         assert!(index.find("r").is_empty(), "one letter matches too much");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn kept_between_runs() {
+        let dir = tree("cache");
+        let files = Files { folders: vec![dir.to_string_lossy().into_owned()], ..Files::default() };
+        let (index, _, _) = walk(&files, None);
+        let path = dir.join("kept.txt");
+        save(&index, &path);
+        let back = load(&path).unwrap();
+        assert_eq!(back.len(), index.len());
+        assert_eq!(back.find("report").len(), 2);
+        assert!(back.entries.iter().any(|e| e.dir && &*e.name == "notes"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

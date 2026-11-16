@@ -28,6 +28,8 @@ pub enum Kind {
     Clip,
     /// An open window.
     Window,
+    /// Text of yours to paste.
+    Snippet,
 }
 
 impl Kind {
@@ -37,6 +39,7 @@ impl Kind {
             Kind::Command => "Command",
             Kind::Link => "Quicklink",
             Kind::Window => "Window",
+            Kind::Snippet => "Snippet",
             Kind::Calculator | Kind::Fallback | Kind::File | Kind::Clip => "",
         }
     }
@@ -80,6 +83,8 @@ pub enum Run {
     Windows,
     /// A copy in clipboard history, by its id.
     Clip(u64),
+    /// A snippet's text, before {date} and the like are filled in.
+    Snippet(String),
     /// An open window, by the system's id for it.
     Window(u64),
     ClearClipboard,
@@ -134,8 +139,8 @@ impl Item {
             Run::Prefill(_) => "Type Text",
             Run::RestartToUpdate => "Restart",
             Run::Appearance | Run::Clipboard | Run::Windows => "Open",
-            Run::Clip(_) if crate::clipboard::can_paste() => "Paste",
-            Run::Clip(_) => "Copy",
+            Run::Clip(_) | Run::Snippet(_) if crate::clipboard::can_paste() => "Paste",
+            Run::Clip(_) | Run::Snippet(_) => "Copy",
             Run::Window(_) => "Switch to Window",
             _ => "Run Command",
         }

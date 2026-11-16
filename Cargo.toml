@@ -56,12 +56,17 @@ windows = { version = "0.62", features = [
   "Win32_System_Memory",
   "Win32_System_Power",
   "Win32_System_Registry",
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
   "Win32_UI_Shell_Common",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+# The local time for snippets' {date} and {time}; already in the tree.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 window-vibrancy = "0.8"
@@ -70,10 +75,11 @@ window-vibrancy = "0.8"
 plist = "1.10"
 icns = "0.5"
 
-# Slint's CPU renderer with hinted text snapped to whole pixels; stock, text is soft at
-# fractional scaling (125% on Windows). Keep its version in step with slint's.
+# Slint's CPU renderer and femtovg (the GPU one) with hinted text snapped to whole pixels; stock,
+# text is soft at fractional scaling (125% on Windows). Keep their versions in step with slint's.
 [patch.crates-io]
 i-slint-renderer-software = { path = "vendor/i-slint-renderer-software" }
+femtovg = { path = "vendor/femtovg" }
 
 [build-dependencies]
 slint-build = "1.18.1"

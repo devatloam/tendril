@@ -36,7 +36,7 @@ pub struct History {
     pub clips: Vec<Clip>,
 }
 
-fn path() -> PathBuf {
+pub fn path() -> PathBuf {
     dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("tendril").join("clipboard.json")
 }
 

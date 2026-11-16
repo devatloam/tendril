@@ -26,6 +26,17 @@ export struct Entry {
     url: string,
 }
 
+// Something Tendril keeps on this computer, on the Privacy & Data tab.
+export struct Stored {
+    key: string,
+    title: string,
+    about: string,
+    path: string,
+    size: string,
+    // The delete button's label; empty for none.
+    action: string,
+}
+
 // Windows 11's own design, used on Windows (settings.rs turns it on): its neutral colours, the
 // accent you picked in Windows, Segoe UI, a card for each setting, and Mica when Tendril draws
 // with the GPU. Elsewhere the window keeps Tendril's look.
@@ -415,8 +426,11 @@ component TextList inherits VerticalLayout {
     in property <[string]> entries;
     in property <string> placeholder;
     in property <string> add-label;
+    // A second button beside Add, for the system's picker; none when empty.
+    in property <string> browse-label;
     callback edited(int, string);
     callback add();
+    callback browse();
     callback remove(int);
     spacing: 8px;
     GroupTitle {
@@ -454,11 +468,32 @@ component TextList inherits VerticalLayout {
 
     HorizontalLayout {
         alignment: start;
+        spacing: 8px;
+        if root.browse-label != "": Button {
+            label: root.browse-label;
+            primary: true;
+            clicked => {
+                root.browse();
+            }
+        }
         Button {
             label: root.add-label;
             clicked => {
                 root.add();
             }
+        }
+    }
+}
+
+// A strip along an edge that resizes the window when dragged.
+component Grip inherits TouchArea {
+    in property <string> dir;
+    in property <MouseCursor> cursor;
+    callback grab(string);
+    mouse-cursor: root.cursor;
+    pointer-event(e) => {
+        if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+            root.grab(root.dir);
         }
     }
 }
@@ -539,8 +574,11 @@ component CaptionButton inherits Rectangle {
 export component SettingsWindow inherits Window {
     title: "Tendril Settings";
     icon: @image-url("../assets/tendril-256.png");
-    width: 800px;
-    height: 560px;
+    // Opens at this size; drag an edge to change it.
+    preferred-width: 800px;
+    preferred-height: 560px;
+    min-width: 640px;
+    min-height: 420px;
     // Without the system's frame, Tendril draws its own (settings.rs says where).
     no-frame: frameless;
     background: Look.mica || corner > 0 ? transparent : Look.fluent ? Look.base : Theme.panel;
@@ -554,6 +592,8 @@ export component SettingsWindow inherits Window {
     in property <[ChoiceGroup]> layout;
     in property <[Entry]> engines;
     in property <[Entry]> links;
+    // A snippet's text travels in `url`.
+    in property <[Entry]> snippets;
     // File search: its settings, how the index stands, and its lists.
     in property <[ChoiceGroup]> files;
     in property <string> files-status;
@@ -561,6 +601,11 @@ export component SettingsWindow inherits Window {
     in property <[string]> include;
     in property <[string]> exclude;
     in property <[string]> exclude-regex;
+    // Privacy & Data: what's kept, ranking's file, and what came of the last delete.
+    in property <[Stored]> stored;
+    in property <string> ranking-path;
+    in property <string> ranking-size;
+    in property <string> data-note;
     in property <[string]> shortcut-keys;
     in property <string> shortcut-note;
     in property <bool> shortcut-ok: true;
@@ -581,6 +626,7 @@ export component SettingsWindow inherits Window {
     in property <string> confirm-message;
     in property <string> confirm-label;
     in property <image> confirm-icon;
+    in property <bool> confirm-danger;
 
     callback chosen(string, int);
     callback record(string, bool, bool, bool, bool) -> bool;
@@ -592,11 +638,21 @@ export component SettingsWindow inherits Window {
     callback link-edited(int, string, string);
     callback link-add();
     callback link-remove(int);
+    callback snippet-edited(int, string, string);
+    callback snippet-add();
+    callback snippet-remove(int);
     // Which list ("folders", "include", "exclude", "exclude_regex"), and where in it.
     callback list-edited(string, int, string);
     callback list-add(string);
     callback list-remove(string, int);
     callback index-now();
+    // The system's folder picker, for a folder to add to file search.
+    callback pick-folder();
+    // A kept thing by key ("ranking", "clipboard", …, "all"): shown in the file manager, or deleted.
+    callback data-show(string);
+    callback data-delete(string);
+    // Where the edges are dragged to resize a window without the system's frame: "n", "se", …
+    callback resize(string);
     callback check-updates();
     callback open-file();
     callback answer(bool);
@@ -636,22 +692,22 @@ export component SettingsWindow inherits Window {
                     root.dismiss();
                     return accept;
                 }
-                // Tabs from the keyboard: Ctrl Tab and Ctrl Shift Tab, Ctrl 1 to 7, or ↑ ↓ when no
+                // Tabs from the keyboard: Ctrl Tab and Ctrl Shift Tab, Ctrl 1 to 9, or ↑ ↓ when no
                 // field has the keys.
                 if e.modifiers.control && e.text == Key.Tab && !e.modifiers.shift {
-                    root.tab = Math.mod(root.tab + 1, 7);
+                    root.tab = Math.mod(root.tab + 1, 9);
                     return accept;
                 }
                 if e.modifiers.control && (e.text == Key.Backtab || (e.text == Key.Tab && e.modifiers.shift)) {
-                    root.tab = Math.mod(root.tab + 6, 7);
+                    root.tab = Math.mod(root.tab + 8, 9);
                     return accept;
                 }
-                if e.modifiers.control && (e.text == "1" || e.text == "2" || e.text == "3" || e.text == "4" || e.text == "5" || e.text == "6" || e.text == "7") {
+                if e.modifiers.control && (e.text == "1" || e.text == "2" || e.text == "3" || e.text == "4" || e.text == "5" || e.text == "6" || e.text == "7" || e.text == "8" || e.text == "9") {
                     root.tab = e.text.to-float() - 1;
                     return accept;
                 }
                 if keys.has-focus && e.text == Key.DownArrow {
-                    root.tab = min(root.tab + 1, 6);
+                    root.tab = min(root.tab + 1, 8);
                     return accept;
                 }
                 if keys.has-focus && e.text == Key.UpArrow {
@@ -734,8 +790,8 @@ export component SettingsWindow inherits Window {
                         }
 
                         Tab {
-                            label: "Files";
-                            icon: @image-url("icons/folder.svg");
+                            label: "Snippets";
+                            icon: @image-url("icons/copy.svg");
                             selected: root.tab == 5;
                             clicked => {
                                 root.tab = 5;
@@ -743,11 +799,29 @@ export component SettingsWindow inherits Window {
                         }
 
                         Tab {
-                            label: "About";
-                            icon: @image-url("icons/tendril.svg");
+                            label: "Files";
+                            icon: @image-url("icons/folder.svg");
                             selected: root.tab == 6;
                             clicked => {
                                 root.tab = 6;
+                            }
+                        }
+
+                        Tab {
+                            label: "Privacy & Data";
+                            icon: @image-url("icons/lock.svg");
+                            selected: root.tab == 7;
+                            clicked => {
+                                root.tab = 7;
+                            }
+                        }
+
+                        Tab {
+                            label: "About";
+                            icon: @image-url("icons/tendril.svg");
+                            selected: root.tab == 8;
+                            clicked => {
+                                root.tab = 8;
                             }
                         }
                     }
@@ -776,7 +850,7 @@ export component SettingsWindow inherits Window {
                             spacing: Look.fluent ? 20px : 18px;
                             alignment: start;
                             Text {
-                                text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : root.tab == 5 ? "Files" : "About";
+                                text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : root.tab == 5 ? "Snippets" : root.tab == 6 ? "Files" : root.tab == 7 ? "Privacy & Data" : "About";
                                 color: Theme.ink;
                                 // Windows' page titles are large.
                                 font-size: Look.fluent ? 28px : 20px;
@@ -980,6 +1054,66 @@ export component SettingsWindow inherits Window {
                             }
 
                             if root.tab == 5: VerticalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Text you paste by finding it by name or keyword. {date}, {time} and {clipboard} are filled in as it's pasted, and \\n starts a new line.";
+                                    color: Theme.ink-3;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+
+                                for snippet[i] in root.snippets: Card {
+                                    HorizontalLayout {
+                                        padding: 10px;
+                                        spacing: 8px;
+                                        Field {
+                                            width: 150px;
+                                            text: snippet.name;
+                                            placeholder: "Name";
+                                            edited(t) => {
+                                                root.snippet-edited(i, "name", t);
+                                            }
+                                        }
+
+                                        Field {
+                                            width: 80px;
+                                            text: snippet.keyword;
+                                            placeholder: "Keyword";
+                                            edited(t) => {
+                                                root.snippet-edited(i, "keyword", t);
+                                            }
+                                        }
+
+                                        Field {
+                                            horizontal-stretch: 1;
+                                            text: snippet.url;
+                                            placeholder: "Thanks,\\nSam";
+                                            edited(t) => {
+                                                root.snippet-edited(i, "text", t);
+                                            }
+                                        }
+
+                                        Button {
+                                            label: "Remove";
+                                            clicked => {
+                                                root.snippet-remove(i);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Button {
+                                        label: "Add Snippet";
+                                        clicked => {
+                                            root.snippet-add();
+                                        }
+                                    }
+                                }
+                            }
+
+                            if root.tab == 6: VerticalLayout {
                                 spacing: 18px;
                                 Card {
                                     height: 64px;
@@ -1030,7 +1164,11 @@ export component SettingsWindow inherits Window {
                                     about: root.folders.length == 0 ? "None listed, so your usual folders are looked through: Desktop, Documents, Downloads, Pictures, Music and Videos." : "Looked through for file search, and the folders inside them.";
                                     entries: root.folders;
                                     placeholder: "~/Projects or D:/Work";
-                                    add-label: "Add Folder";
+                                    browse-label: "Choose Folder…";
+                                    add-label: "Type a Path";
+                                    browse => {
+                                        root.pick-folder();
+                                    }
                                     edited(i, t) => {
                                         root.list-edited("folders", i, t);
                                     }
@@ -1094,7 +1232,204 @@ export component SettingsWindow inherits Window {
                                 }
                             }
 
-                            if root.tab == 6: VerticalLayout {
+                            if root.tab == 7: VerticalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Everything Tendril keeps stays on this computer, in the files below. Nothing is collected about you, and nothing is sent anywhere except the two things under What goes online.";
+                                    color: Look.fluent ? Look.ink-2 : Theme.ink-2;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                }
+
+                                if root.data-note != "": Text {
+                                    text: root.data-note;
+                                    color: Look.fluent ? Look.accent : Theme.green;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+
+                                GroupTitle {
+                                    text: "How ranking works";
+                                }
+
+                                Card {
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 8px;
+                                        Text {
+                                            text: "When you type, apps and commands whose names match come first, and names that start with what you typed come before ones that only contain it. Words in a description count when a word starts with what you typed.";
+                                            color: Look.fluent ? Look.ink : Theme.ink;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                        }
+
+                                        Text {
+                                            text: "Then what you use moves up. Each time you open something from Tendril it gets a point: worth all of it today, 70% this week, 40% this month and 20% after that, so old habits fade. What you picked the last time you typed exactly the same thing goes straight to the top. Favourites you pinned stay where you put them.";
+                                            color: Look.fluent ? Look.ink : Theme.ink;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                        }
+
+                                        Text {
+                                            text: "Files are ranked by name only: the exact name, then names starting with what you typed, then shorter paths. What you open from file search isn't counted.";
+                                            color: Look.fluent ? Look.ink : Theme.ink;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 12px;
+                                            padding-top: 4px;
+                                            VerticalLayout {
+                                                alignment: center;
+                                                horizontal-stretch: 1;
+                                                Text {
+                                                    text: root.ranking-path;
+                                                    color: Look.fluent ? Look.ink-3 : Theme.ink-3;
+                                                    font-size: 12px;
+                                                    overflow: elide;
+                                                }
+
+                                                Text {
+                                                    text: root.ranking-size;
+                                                    color: Look.fluent ? Look.ink-3 : Theme.ink-3;
+                                                    font-size: 12px;
+                                                }
+                                            }
+
+                                            VerticalLayout {
+                                                alignment: center;
+                                                Button {
+                                                    label: "Show";
+                                                    clicked => {
+                                                        root.data-show("ranking");
+                                                    }
+                                                }
+                                            }
+
+                                            VerticalLayout {
+                                                alignment: center;
+                                                Button {
+                                                    label: "Reset Ranking";
+                                                    clicked => {
+                                                        root.data-delete("ranking");
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                GroupTitle {
+                                    text: "What Tendril keeps";
+                                }
+
+                                for item in root.stored: Card {
+                                    HorizontalLayout {
+                                        padding: 14px;
+                                        padding-left: 16px;
+                                        spacing: 12px;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            HorizontalLayout {
+                                                spacing: 8px;
+                                                Text {
+                                                    text: item.title;
+                                                    color: Look.fluent ? Look.ink : Theme.ink;
+                                                    font-size: 13px;
+                                                    font-weight: 500;
+                                                }
+
+                                                Text {
+                                                    text: item.size;
+                                                    color: Look.fluent ? Look.ink-3 : Theme.ink-3;
+                                                    font-size: 12px;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+
+                                            Text {
+                                                text: item.about;
+                                                color: Look.fluent ? Look.ink-2 : Theme.ink-2;
+                                                font-size: 12px;
+                                                wrap: word-wrap;
+                                            }
+
+                                            Text {
+                                                text: item.path;
+                                                color: Look.fluent ? Look.ink-3 : Theme.ink-3;
+                                                font-size: 12px;
+                                                overflow: elide;
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Button {
+                                                label: "Show";
+                                                clicked => {
+                                                    root.data-show(item.key);
+                                                }
+                                            }
+                                        }
+
+                                        if item.action != "": VerticalLayout {
+                                            alignment: center;
+                                            Button {
+                                                label: item.action;
+                                                clicked => {
+                                                    root.data-delete(item.key);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Button {
+                                        label: "Delete Everything but Settings";
+                                        clicked => {
+                                            root.data-delete("all");
+                                        }
+                                    }
+                                }
+
+                                GroupTitle {
+                                    text: "What goes online";
+                                }
+
+                                Card {
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 8px;
+                                        Text {
+                                            text: "Updates: every six hours while Tendril runs, GitHub is asked for the newest release, and a new version is downloaded from there. Turn Updates off in General and nothing is asked.";
+                                            color: Look.fluent ? Look.ink : Theme.ink;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                        }
+
+                                        Text {
+                                            text: "Website icons: each quicklink's own site is asked once for its icon. No other site hears about it. Turn Website icons off in General and none are fetched.";
+                                            color: Look.fluent ? Look.ink : Theme.ink;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                        }
+
+                                        Text {
+                                            text: "Searches and links open in your browser, which is where they go from there. What you type in Tendril, your files and your clipboard never leave this computer.";
+                                            color: Look.fluent ? Look.ink-2 : Theme.ink-2;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if root.tab == 8: VerticalLayout {
                                 spacing: 14px;
                                 HorizontalLayout {
                                     spacing: 16px;
@@ -1211,6 +1546,96 @@ export component SettingsWindow inherits Window {
             }
         }
 
+        // Edges to resize by, where the system draws no frame to grab.
+        if root.frameless: Grip {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: 5px;
+            cursor: ns-resize;
+            dir: "n";
+            grab(d) => {
+                root.resize(d);
+            }
+        }
+        if root.frameless: Grip {
+            x: 0;
+            y: root.height - 5px;
+            width: root.width;
+            height: 5px;
+            cursor: ns-resize;
+            dir: "s";
+            grab(d) => {
+                root.resize(d);
+            }
+        }
+        if root.frameless: Grip {
+            x: 0;
+            y: 0;
+            width: 5px;
+            height: root.height;
+            cursor: ew-resize;
+            dir: "w";
+            grab(d) => {
+                root.resize(d);
+            }
+        }
+        if root.frameless: Grip {
+            x: root.width - 5px;
+            y: 0;
+            width: 5px;
+            height: root.height;
+            cursor: ew-resize;
+            dir: "e";
+            grab(d) => {
+                root.resize(d);
+            }
+        }
+        if root.frameless: Grip {
+            x: 0;
+            y: 0;
+            width: 10px;
+            height: 10px;
+            cursor: nwse-resize;
+            dir: "nw";
+            grab(d) => {
+                root.resize(d);
+            }
+        }
+        if root.frameless: Grip {
+            x: root.width - 10px;
+            y: 0;
+            width: 10px;
+            height: 10px;
+            cursor: nesw-resize;
+            dir: "ne";
+            grab(d) => {
+                root.resize(d);
+            }
+        }
+        if root.frameless: Grip {
+            x: 0;
+            y: root.height - 10px;
+            width: 10px;
+            height: 10px;
+            cursor: nesw-resize;
+            dir: "sw";
+            grab(d) => {
+                root.resize(d);
+            }
+        }
+        if root.frameless: Grip {
+            x: root.width - 10px;
+            y: root.height - 10px;
+            width: 10px;
+            height: 10px;
+            cursor: nwse-resize;
+            dir: "se";
+            grab(d) => {
+                root.resize(d);
+            }
+        }
+
         if root.confirm-open: ConfirmDialog {
             width: root.width;
             height: root.height;
@@ -1219,7 +1644,7 @@ export component SettingsWindow inherits Window {
             message: root.confirm-message;
             label: root.confirm-label;
             icon: root.confirm-icon;
-            danger: false;
+            danger: root.confirm-danger;
             answer(yes) => {
                 root.answer(yes);
             }

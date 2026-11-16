@@ -5225,6 +5225,7 @@ dependencies = [
  "icns",
  "ignore",
  "image",
+ "libc",
  "nucleo-matcher",
  "plist",
  "regex",

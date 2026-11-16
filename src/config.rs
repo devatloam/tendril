@@ -28,6 +28,18 @@ pub struct Config {
     pub search: Vec<Engine>,
     /// Your own links, [[quicklink]] in the file.
     pub quicklink: Vec<Quicklink>,
+    /// Text you paste by name, [[snippet]] in the file.
+    pub snippet: Vec<Snippet>,
+}
+
+/// Text kept to paste: found by its name or keyword.
+#[derive(Deserialize, Clone)]
+pub struct Snippet {
+    pub name: String,
+    #[serde(default)]
+    pub keyword: String,
+    /// {date}, {time} and {clipboard} are filled in as it's pasted; \n starts a new line.
+    pub text: String,
 }
 
 #[derive(Deserialize, Clone, PartialEq)]
@@ -193,6 +205,7 @@ impl Default for Config {
                 Engine { name: "DuckDuckGo".into(), url: "https://duckduckgo.com/?q={query}".into() },
             ],
             quicklink: vec![Quicklink { name: "GitHub repository".into(), keyword: "gh".into(), url: "https://github.com/{raw}".into() }],
+            snippet: Vec::new(),
         }
     }
 }
@@ -308,6 +321,13 @@ url = "https://duckduckgo.com/?q={query}"
 name = "GitHub repository"
 keyword = "gh"
 url = "https://github.com/{raw}"
+
+# Snippets: text you paste by finding it by name or keyword. {date}, {time} and {clipboard} are
+# filled in as it's pasted, and \n starts a new line. Settings → Snippets edits these too.
+# [[snippet]]
+# name = "Sign-off"
+# keyword = "sig"
+# text = "Thanks,\nSam"
 "#;
 
 /// The commented file, with this system's own default blur style.

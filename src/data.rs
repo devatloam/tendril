@@ -18,7 +18,7 @@ pub fn kept() -> Vec<Kept> {
         Kept {
             key: "settings",
             title: "Settings",
-            about: "Everything you set in Tendril, as text you can edit. Kept until you delete it yourself.",
+            about: "Everything you set in Tendril, your quicklinks and snippets included, as text you can edit. Kept until you delete it yourself.",
             path: crate::config::path(),
             action: None,
         },

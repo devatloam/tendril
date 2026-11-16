@@ -348,6 +348,11 @@ impl Index {
         self.entries.len()
     }
 
+    /// Forgets a file or folder (and what's in it) that Tendril moved to the bin.
+    pub fn remove(&mut self, path: &Path) {
+        self.entries.retain(|e| !e.path.starts_with(path));
+    }
+
     /// The best matches for what's typed: every word somewhere in the name, names that start
     /// with it first, then shorter paths.
     pub fn find(&self, query: &str) -> Vec<Item> {

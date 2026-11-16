@@ -21,6 +21,7 @@ mod paths;
 mod search;
 mod settings;
 mod sites;
+mod snippets;
 mod switcher;
 mod system;
 mod tray;

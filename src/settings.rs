@@ -34,6 +34,7 @@ thread_local! {
     /// The lists as they're being edited; written to config.toml on every change.
     static ENGINES: RefCell<Vec<config::Engine>> = const { RefCell::new(Vec::new()) };
     static LINKS: RefCell<Vec<config::Quicklink>> = const { RefCell::new(Vec::new()) };
+    static SNIPPETS: RefCell<Vec<config::Snippet>> = const { RefCell::new(Vec::new()) };
     /// File search's folders and patterns, as they're being edited.
     static FILE_LISTS: RefCell<FileLists> = const { RefCell::new(FileLists { folders: Vec::new(), include: Vec::new(), exclude: Vec::new(), exclude_regex: Vec::new() }) };
     /// A change waiting for "Turn On" in the GPU question.
@@ -61,8 +62,27 @@ impl FileLists {
     }
 }
 
-/// Opens the window at a tab (0 General … 5 Files, 6 About), or brings it forward if it's open.
+/// Where the window was and how big, when it was last closed: "x y width height", in pixels.
+fn place_path() -> std::path::PathBuf {
+    dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("tendril").join("settings-window")
+}
+
+fn saved_place() -> Option<(i32, i32, u32, u32)> {
+    let text = std::fs::read_to_string(place_path()).ok()?;
+    let mut n = text.split_whitespace();
+    Some((n.next()?.parse().ok()?, n.next()?.parse().ok()?, n.next()?.parse().ok()?, n.next()?.parse().ok()?))
+}
+
+fn save_place(w: &SettingsWindow) {
+    let (at, size) = (w.window().position(), w.window().size());
+    if size.width > 0 && size.height > 0 {
+        let _ = std::fs::write(place_path(), format!("{} {} {} {}", at.x, at.y, size.width, size.height));
+    }
+}
+
+/// Opens the window at a tab (0 General … 8 About), or brings it forward if it's open.
 pub fn open(tab: i32) {
+    let mut fresh = false;
     let made = WINDOW.with_borrow_mut(|slot| {
         if slot.is_none() {
             match crate::window::plain(SettingsWindow::new) {
@@ -73,6 +93,7 @@ pub fn open(tab: i32) {
                     w.set_top_inset(inset);
                     wire(&w);
                     *slot = Some(w);
+                    fresh = true;
                 }
                 Err(e) => {
                     eprintln!("tendril: couldn't open settings: {e}");
@@ -85,9 +106,14 @@ pub fn open(tab: i32) {
     if !made {
         return;
     }
+    let place = if fresh { saved_place() } else { None };
     with_window(|w| {
         w.set_tab(tab);
         fill(w);
+        // The size it was left at; the place is set once the system has made the window.
+        if let Some((_, _, width, height)) = place {
+            w.window().set_size(slint::PhysicalSize::new(width, height));
+        }
         if let Err(e) = w.show() {
             eprintln!("tendril: couldn't show settings: {e}");
         }
@@ -96,12 +122,25 @@ pub fn open(tab: i32) {
             if let Some(w) = weak.upgrade()
                 && let Ok(winit) = w.window().winit_window().await
             {
-                // In the middle of the screen, where the system might put it anywhere.
-                if let Some(monitor) = winit.current_monitor().or_else(|| winit.primary_monitor()) {
+                use slint::winit_030::winit::dpi::PhysicalPosition;
+                // Where it was left, if that's still on a screen (one may have been unplugged).
+                let on_screen = |x: i32, y: i32| {
+                    winit.available_monitors().any(|m| {
+                        let (at, size) = (m.position(), m.size());
+                        x + 40 >= at.x && x + 40 < at.x + size.width as i32 && y >= at.y && y + 20 < at.y + size.height as i32
+                    })
+                };
+                if let Some((x, y, _, _)) = place
+                    && on_screen(x, y)
+                {
+                    winit.set_outer_position(PhysicalPosition::new(x, y));
+                } else if fresh && let Some(monitor) = winit.current_monitor().or_else(|| winit.primary_monitor()) {
+                    // In the middle of the screen, where the system might put it anywhere. One
+                    // already open stays where it is.
                     let (at, screen, size) = (monitor.position(), monitor.size(), winit.outer_size());
                     let x = at.x + (screen.width as i32 - size.width as i32) / 2;
                     let y = at.y + (screen.height as i32 - size.height as i32) / 2;
-                    winit.set_outer_position(slint::winit_030::winit::dpi::PhysicalPosition::new(x, y));
+                    winit.set_outer_position(PhysicalPosition::new(x, y));
                 }
                 crate::window::round(&winit);
                 #[cfg(windows)]
@@ -138,6 +177,7 @@ fn close() {
         if w.get_recording() {
             with_app(|a| a.pause_shortcut(false));
         }
+        save_place(w);
         let _ = w.hide();
     });
     slint::Timer::single_shot(std::time::Duration::ZERO, || {
@@ -159,6 +199,10 @@ fn fill(w: &SettingsWindow) {
 
     ENGINES.with_borrow_mut(|e| *e = config.search.clone());
     LINKS.with_borrow_mut(|l| *l = config.quicklink.clone());
+    // Shown on one line: a new line written in the file shows as \n.
+    SNIPPETS.with_borrow_mut(|s| {
+        *s = config.snippet.iter().map(|s| config::Snippet { text: s.text.replace('\n', "\\n"), ..s.clone() }).collect()
+    });
     let f = &config.files;
     FILE_LISTS.with_borrow_mut(|l| {
         *l = FileLists {
@@ -287,6 +331,10 @@ fn show_lists(w: &SettingsWindow) {
     });
     w.set_engines(ModelRc::new(VecModel::from(engines)));
     w.set_links(ModelRc::new(VecModel::from(links)));
+    let snippets: Vec<Entry> = SNIPPETS.with_borrow(|s| {
+        s.iter().map(|s| Entry { name: s.name.as_str().into(), keyword: s.keyword.as_str().into(), url: s.text.as_str().into() }).collect()
+    });
+    w.set_snippets(ModelRc::new(VecModel::from(snippets)));
     let model = |list: &[String]| -> ModelRc<SharedString> {
         ModelRc::new(VecModel::from(list.iter().map(|s| s.as_str().into()).collect::<Vec<SharedString>>()))
     };
@@ -428,6 +476,31 @@ fn wire(w: &SettingsWindow) {
         save_links();
         with_window(show_lists);
     });
+    w.on_snippet_edited(|i, field, text| {
+        SNIPPETS.with_borrow_mut(|snippets| {
+            if let Some(s) = snippets.get_mut(i as usize) {
+                match field.as_str() {
+                    "name" => s.name = text.to_string(),
+                    "keyword" => s.keyword = text.to_string(),
+                    _ => s.text = text.to_string(),
+                }
+            }
+        });
+        save_snippets();
+    });
+    w.on_snippet_add(|| {
+        SNIPPETS.with_borrow_mut(|s| s.push(config::Snippet { name: String::new(), keyword: String::new(), text: String::new() }));
+        with_window(show_lists);
+    });
+    w.on_snippet_remove(|i| {
+        SNIPPETS.with_borrow_mut(|s| {
+            if (i as usize) < s.len() {
+                s.remove(i as usize);
+            }
+        });
+        save_snippets();
+        with_window(show_lists);
+    });
     w.on_list_edited(|name, i, text| {
         let Some(name) = list_name(&name) else { return };
         FILE_LISTS.with_borrow_mut(|l| {
@@ -457,6 +530,40 @@ fn wire(w: &SettingsWindow) {
         });
         save_file_list(name);
         with_window(show_lists);
+    });
+    w.on_pick_folder(|| {
+        // The dialog belongs to this window on Windows, so it opens in front of it.
+        let mut owner = 0isize;
+        #[cfg(windows)]
+        with_window(|w| {
+            use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            let _ = w.window().with_winit_window(|winit| {
+                if let Ok(handle) = winit.window_handle()
+                    && let RawWindowHandle::Win32(h) = handle.as_raw()
+                {
+                    owner = h.hwnd.get();
+                }
+            });
+        });
+        let _ = std::thread::Builder::new().name("folder-picker".into()).spawn(move || {
+            let Some(path) = system::pick_folder(owner) else { return };
+            let _ = slint::invoke_from_event_loop(move || {
+                let shown = crate::paths::shorten_home(&path);
+                let added = FILE_LISTS.with_borrow_mut(|l| {
+                    let folders = &mut l.folders;
+                    folders.retain(|f| !f.trim().is_empty());
+                    let new = !folders.iter().any(|f| crate::paths::expand(f) == path);
+                    if new {
+                        folders.push(shown);
+                    }
+                    new
+                });
+                if added {
+                    save_file_list("folders");
+                }
+                with_window(show_lists);
+            });
+        });
     });
     w.on_index_now(|| {
         with_app(|a| a.index_files(true));
@@ -586,6 +693,27 @@ fn save_links() {
         })
         .collect();
     if let Err(e) = config::set_list("quicklink", &entries) {
+        with_window(|w| w.set_update_note(format!("Couldn't save: {e}").into()));
+    }
+    with_app(|a| a.settings_changed());
+}
+
+/// Saves the snippets that have a name and some text; half-typed ones wait until they do.
+fn save_snippets() {
+    let snippets = SNIPPETS.with_borrow(|s| s.clone());
+    let entries: Vec<Vec<(&str, config::Value)>> = snippets
+        .iter()
+        .filter(|s| !s.name.trim().is_empty() && !s.text.is_empty())
+        .map(|s| {
+            let mut entry = vec![("name", config::Value::Text(s.name.trim()))];
+            if !s.keyword.trim().is_empty() {
+                entry.push(("keyword", config::Value::Text(s.keyword.trim())));
+            }
+            entry.push(("text", config::Value::Text(&s.text)));
+            entry
+        })
+        .collect();
+    if let Err(e) = config::set_list("snippet", &entries) {
         with_window(|w| w.set_update_note(format!("Couldn't save: {e}").into()));
     }
     with_app(|a| a.settings_changed());

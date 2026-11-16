@@ -426,8 +426,11 @@ component TextList inherits VerticalLayout {
     in property <[string]> entries;
     in property <string> placeholder;
     in property <string> add-label;
+    // A second button beside Add, for the system's picker; none when empty.
+    in property <string> browse-label;
     callback edited(int, string);
     callback add();
+    callback browse();
     callback remove(int);
     spacing: 8px;
     GroupTitle {
@@ -465,6 +468,14 @@ component TextList inherits VerticalLayout {
 
     HorizontalLayout {
         alignment: start;
+        spacing: 8px;
+        if root.browse-label != "": Button {
+            label: root.browse-label;
+            primary: true;
+            clicked => {
+                root.browse();
+            }
+        }
         Button {
             label: root.add-label;
             clicked => {
@@ -581,6 +592,8 @@ export component SettingsWindow inherits Window {
     in property <[ChoiceGroup]> layout;
     in property <[Entry]> engines;
     in property <[Entry]> links;
+    // A snippet's text travels in `url`.
+    in property <[Entry]> snippets;
     // File search: its settings, how the index stands, and its lists.
     in property <[ChoiceGroup]> files;
     in property <string> files-status;
@@ -625,11 +638,16 @@ export component SettingsWindow inherits Window {
     callback link-edited(int, string, string);
     callback link-add();
     callback link-remove(int);
+    callback snippet-edited(int, string, string);
+    callback snippet-add();
+    callback snippet-remove(int);
     // Which list ("folders", "include", "exclude", "exclude_regex"), and where in it.
     callback list-edited(string, int, string);
     callback list-add(string);
     callback list-remove(string, int);
     callback index-now();
+    // The system's folder picker, for a folder to add to file search.
+    callback pick-folder();
     // A kept thing by key ("ranking", "clipboard", …, "all"): shown in the file manager, or deleted.
     callback data-show(string);
     callback data-delete(string);
@@ -674,22 +692,22 @@ export component SettingsWindow inherits Window {
                     root.dismiss();
                     return accept;
                 }
-                // Tabs from the keyboard: Ctrl Tab and Ctrl Shift Tab, Ctrl 1 to 8, or ↑ ↓ when no
+                // Tabs from the keyboard: Ctrl Tab and Ctrl Shift Tab, Ctrl 1 to 9, or ↑ ↓ when no
                 // field has the keys.
                 if e.modifiers.control && e.text == Key.Tab && !e.modifiers.shift {
-                    root.tab = Math.mod(root.tab + 1, 8);
+                    root.tab = Math.mod(root.tab + 1, 9);
                     return accept;
                 }
                 if e.modifiers.control && (e.text == Key.Backtab || (e.text == Key.Tab && e.modifiers.shift)) {
-                    root.tab = Math.mod(root.tab + 7, 8);
+                    root.tab = Math.mod(root.tab + 8, 9);
                     return accept;
                 }
-                if e.modifiers.control && (e.text == "1" || e.text == "2" || e.text == "3" || e.text == "4" || e.text == "5" || e.text == "6" || e.text == "7" || e.text == "8") {
+                if e.modifiers.control && (e.text == "1" || e.text == "2" || e.text == "3" || e.text == "4" || e.text == "5" || e.text == "6" || e.text == "7" || e.text == "8" || e.text == "9") {
                     root.tab = e.text.to-float() - 1;
                     return accept;
                 }
                 if keys.has-focus && e.text == Key.DownArrow {
-                    root.tab = min(root.tab + 1, 7);
+                    root.tab = min(root.tab + 1, 8);
                     return accept;
                 }
                 if keys.has-focus && e.text == Key.UpArrow {
@@ -772,8 +790,8 @@ export component SettingsWindow inherits Window {
                         }
 
                         Tab {
-                            label: "Files";
-                            icon: @image-url("icons/folder.svg");
+                            label: "Snippets";
+                            icon: @image-url("icons/copy.svg");
                             selected: root.tab == 5;
                             clicked => {
                                 root.tab = 5;
@@ -781,8 +799,8 @@ export component SettingsWindow inherits Window {
                         }
 
                         Tab {
-                            label: "Privacy & Data";
-                            icon: @image-url("icons/lock.svg");
+                            label: "Files";
+                            icon: @image-url("icons/folder.svg");
                             selected: root.tab == 6;
                             clicked => {
                                 root.tab = 6;
@@ -790,11 +808,20 @@ export component SettingsWindow inherits Window {
                         }
 
                         Tab {
-                            label: "About";
-                            icon: @image-url("icons/tendril.svg");
+                            label: "Privacy & Data";
+                            icon: @image-url("icons/lock.svg");
                             selected: root.tab == 7;
                             clicked => {
                                 root.tab = 7;
+                            }
+                        }
+
+                        Tab {
+                            label: "About";
+                            icon: @image-url("icons/tendril.svg");
+                            selected: root.tab == 8;
+                            clicked => {
+                                root.tab = 8;
                             }
                         }
                     }
@@ -823,7 +850,7 @@ export component SettingsWindow inherits Window {
                             spacing: Look.fluent ? 20px : 18px;
                             alignment: start;
                             Text {
-                                text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : root.tab == 5 ? "Files" : root.tab == 6 ? "Privacy & Data" : "About";
+                                text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : root.tab == 5 ? "Snippets" : root.tab == 6 ? "Files" : root.tab == 7 ? "Privacy & Data" : "About";
                                 color: Theme.ink;
                                 // Windows' page titles are large.
                                 font-size: Look.fluent ? 28px : 20px;
@@ -1027,6 +1054,66 @@ export component SettingsWindow inherits Window {
                             }
 
                             if root.tab == 5: VerticalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "Text you paste by finding it by name or keyword. {date}, {time} and {clipboard} are filled in as it's pasted, and \\n starts a new line.";
+                                    color: Theme.ink-3;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+
+                                for snippet[i] in root.snippets: Card {
+                                    HorizontalLayout {
+                                        padding: 10px;
+                                        spacing: 8px;
+                                        Field {
+                                            width: 150px;
+                                            text: snippet.name;
+                                            placeholder: "Name";
+                                            edited(t) => {
+                                                root.snippet-edited(i, "name", t);
+                                            }
+                                        }
+
+                                        Field {
+                                            width: 80px;
+                                            text: snippet.keyword;
+                                            placeholder: "Keyword";
+                                            edited(t) => {
+                                                root.snippet-edited(i, "keyword", t);
+                                            }
+                                        }
+
+                                        Field {
+                                            horizontal-stretch: 1;
+                                            text: snippet.url;
+                                            placeholder: "Thanks,\\nSam";
+                                            edited(t) => {
+                                                root.snippet-edited(i, "text", t);
+                                            }
+                                        }
+
+                                        Button {
+                                            label: "Remove";
+                                            clicked => {
+                                                root.snippet-remove(i);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Button {
+                                        label: "Add Snippet";
+                                        clicked => {
+                                            root.snippet-add();
+                                        }
+                                    }
+                                }
+                            }
+
+                            if root.tab == 6: VerticalLayout {
                                 spacing: 18px;
                                 Card {
                                     height: 64px;
@@ -1077,7 +1164,11 @@ export component SettingsWindow inherits Window {
                                     about: root.folders.length == 0 ? "None listed, so your usual folders are looked through: Desktop, Documents, Downloads, Pictures, Music and Videos." : "Looked through for file search, and the folders inside them.";
                                     entries: root.folders;
                                     placeholder: "~/Projects or D:/Work";
-                                    add-label: "Add Folder";
+                                    browse-label: "Choose Folder…";
+                                    add-label: "Type a Path";
+                                    browse => {
+                                        root.pick-folder();
+                                    }
                                     edited(i, t) => {
                                         root.list-edited("folders", i, t);
                                     }
@@ -1141,7 +1232,7 @@ export component SettingsWindow inherits Window {
                                 }
                             }
 
-                            if root.tab == 6: VerticalLayout {
+                            if root.tab == 7: VerticalLayout {
                                 spacing: 10px;
                                 Text {
                                     text: "Everything Tendril keeps stays on this computer, in the files below. Nothing is collected about you, and nothing is sent anywhere except the two things under What goes online.";
@@ -1338,7 +1429,7 @@ export component SettingsWindow inherits Window {
                                 }
                             }
 
-                            if root.tab == 7: VerticalLayout {
+                            if root.tab == 8: VerticalLayout {
                                 spacing: 14px;
                                 HorizontalLayout {
                                     spacing: 16px;

@@ -92,6 +92,8 @@ pub struct App {
     shown_actions: RefCell<Vec<usize>>,
     action_rows: Rc<VecModel<ActionRow>>,
     pending: RefCell<Option<Item>>,
+    /// A file waiting for "Move" in the confirm dialog, to go to the Recycle Bin or Trash.
+    pending_trash: RefCell<Option<PathBuf>>,
     /// A setting change waiting for "Turn On" in the GPU dialog: its key and direction.
     pending_setting: Cell<Option<(&'static str, i32)>>,
     toast_timer: Timer,
@@ -157,6 +159,12 @@ enum Act {
     /// Windows: start the program elevated.
     #[cfg_attr(not(windows), allow(dead_code))]
     RunAsAdmin(PathBuf),
+    /// A file, with the system's "Open with" dialog.
+    OpenWith(PathBuf),
+    /// The file itself on the clipboard, to paste somewhere.
+    CopyFile(PathBuf),
+    /// A file or folder to the Recycle Bin or Trash, after asking.
+    Trash(PathBuf),
 }
 
 impl App {
@@ -180,6 +188,7 @@ impl App {
             shown_actions: RefCell::default(),
             action_rows,
             pending: RefCell::default(),
+            pending_trash: RefCell::default(),
             pending_setting: Cell::new(None),
             toast_timer: Timer::default(),
             scanned_at: Cell::new(None),
@@ -580,6 +589,7 @@ impl App {
         ui.set_about_open(false);
         self.pending.take();
         self.pending_setting.take();
+        self.pending_trash.take();
     }
 
     /// Looks for installed apps on a background thread; the list updates when it's done.
@@ -622,6 +632,7 @@ impl App {
         let mut catalog = self.apps.borrow().clone();
         catalog.extend(crate::catalog::commands());
         catalog.extend(crate::catalog::quicklinks(&self.config.borrow().quicklink));
+        catalog.extend(crate::snippets::items(&self.config.borrow().snippet));
         *self.browser.borrow_mut() = crate::browser::icon(&catalog);
         for item in &mut catalog {
             self.decorate(item);
@@ -1840,6 +1851,18 @@ impl App {
                     Err(e) => Err(e),
                 }
             }
+            Run::Snippet(text) => {
+                let text = crate::snippets::expand(text, clipboard::read().as_deref());
+                match system::copy(&text) {
+                    Ok(()) if clipboard::can_paste() => {
+                        window::hide(&ui);
+                        clipboard::paste_soon();
+                        Ok(Done::Stay)
+                    }
+                    Ok(()) => Ok(Done::Toast("Copied. Paste it where you like.".into(), true)),
+                    Err(e) => Err(e),
+                }
+            }
             Run::Window(id) => match switcher::focus(*id) {
                 Ok(()) => Ok(Done::Hide),
                 Err(e) => Err(e),
@@ -1914,6 +1937,19 @@ impl App {
         if let Some((key, delta)) = self.pending_setting.take() {
             if yes {
                 self.apply_setting(key, delta);
+            }
+            return;
+        }
+        if let Some(path) = self.pending_trash.take() {
+            if yes {
+                match system::trash(&path) {
+                    Ok(()) => {
+                        self.files.borrow_mut().remove(&path);
+                        self.toast(&format!("Moved to the {}", system::trash_name()), false);
+                        self.refresh(&ui.get_query());
+                    }
+                    Err(e) => self.toast(&format!("Couldn't move it: {e}"), true),
+                }
             }
             return;
         }
@@ -2038,6 +2074,25 @@ impl App {
             },
             #[cfg(not(windows))]
             Act::RunAsAdmin(_) => {}
+            Act::OpenWith(path) => match system::open_with(&path) {
+                Ok(()) => window::hide(ui),
+                Err(e) => self.toast(&format!("Couldn't open it: {e}"), true),
+            },
+            Act::CopyFile(path) => match system::copy_file(&path) {
+                Ok(()) => self.toast("Copied. Paste it into a folder or a chat.", false),
+                Err(e) => self.toast(&format!("Couldn't copy it: {e}"), true),
+            },
+            Act::Trash(path) => {
+                let name = path.file_name().map_or_else(|| path.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned());
+                ui.set_confirm_title(format!("Move to {}?", system::trash_name()).into());
+                ui.set_confirm_message(format!("“{name}” goes to the {}, where you can get it back from.", system::trash_name()).into());
+                ui.set_confirm_label("Move".into());
+                ui.set_confirm_danger(true);
+                ui.set_confirm_icon(self.icons.borrow_mut().builtin_solid("eraser"));
+                *self.pending_trash.borrow_mut() = Some(path);
+                ui.set_actions_open(false);
+                ui.set_confirm_open(true);
+            }
             Act::CopyClip(id) => {
                 let text = self.history.borrow().get(id).map(|c| c.text.clone());
                 match text.map(|t| system::copy(&t)) {
@@ -2143,6 +2198,17 @@ fn actions_for(item: &Item, usage: &Usage) -> Vec<Act> {
         acts.push(Act::Reveal(path.clone()));
         acts.push(Act::Copy("path", path.to_string_lossy().into_owned()));
     }
+    if item.kind == Kind::File
+        && let Some(path) = &item.path
+    {
+        let name = path.file_name().map_or_else(|| item.title.clone(), |n| n.to_string_lossy().into_owned());
+        acts.push(Act::Copy("name", name));
+        acts.push(Act::CopyFile(path.clone()));
+        if system::can_open_with() && !matches!(item.run, Run::Path(_, true)) {
+            acts.push(Act::OpenWith(path.clone()));
+        }
+        acts.push(Act::Trash(path.clone()));
+    }
     #[cfg(windows)]
     if item.kind == Kind::Application
         && let Some(path) = &item.path
@@ -2150,7 +2216,7 @@ fn actions_for(item: &Item, usage: &Usage) -> Vec<Act> {
     {
         acts.push(Act::RunAsAdmin(path.clone()));
     }
-    if matches!(item.kind, Kind::Application | Kind::Command | Kind::Link) && !item.id.starts_with("cmd:ms-settings") {
+    if matches!(item.kind, Kind::Application | Kind::Command | Kind::Link | Kind::Snippet) && !item.id.starts_with("cmd:ms-settings") {
         acts.push(Act::Pin(usage.is_pinned(&item.id)));
     }
     if item.kind == Kind::Application || item.kind == Kind::Command {
@@ -2180,6 +2246,9 @@ fn describe(act: &Act, item: &Item, second: bool) -> (String, &'static str, Vec<
         Act::Pin(false) => ("Add to Favourites".into(), "star", keys, false),
         Act::Pin(true) => ("Remove from Favourites".into(), "star", keys, false),
         Act::RunAsAdmin(_) => ("Run as Administrator".into(), "open", keys, false),
+        Act::OpenWith(_) => ("Open With…".into(), "open", keys, false),
+        Act::CopyFile(_) => ("Copy File".into(), "copy", keys, false),
+        Act::Trash(_) => (format!("Move to {}", system::trash_name()), "eraser", keys, true),
     }
 }
 

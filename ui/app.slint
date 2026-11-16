@@ -78,6 +78,7 @@ export component Launcher inherits Window {
     in property <int> context-tint;
     in property <string> context-title: "Tendril";
     in property <string> primary-label;
+    in property <string> secondary-label;
     in property <string> mod-key: "Ctrl";
     in property <string> toast;
     in property <bool> toast-failed;
@@ -241,7 +242,8 @@ export component Launcher inherits Window {
                     }
                     return accept;
                 }
-                if e.modifiers.control && (e.text == "k" || e.text == "K") {
+                // Ctrl K, or Tab, opens and closes the actions.
+                if (e.modifiers.control && (e.text == "k" || e.text == "K")) || (e.text == Key.Tab && !e.modifiers.shift && !e.modifiers.control) {
                     root.toggle-actions();
                     return accept;
                 }
@@ -301,6 +303,12 @@ export component Launcher inherits Window {
                 }
                 // With nothing typed, Backspace goes back out of a view, like Escape.
                 if e.text == Key.Backspace && root.query == "" && root.back() {
+                    return accept;
+                }
+                // Ctrl Backspace clears what's typed, all of it.
+                if e.text == Key.Backspace && e.modifiers.control && root.query != "" {
+                    root.query = "";
+                    root.query-edited("");
                     return accept;
                 }
                 if e.modifiers.control && e.text == "," {
@@ -774,6 +782,47 @@ export component Launcher inherits Window {
 
                                     VerticalLayout {
                                         alignment: center;
+                                        Keycap {
+                                            label: "↵";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // What Ctrl Enter does with what's selected, when it does something.
+                        if root.secondary-label != "": VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                height: 28px;
+                                border-radius: 6px;
+                                background: secondary-touch.has-hover ? Theme.ink.with-alpha(0.08) : transparent;
+                                secondary-touch := TouchArea {
+                                    clicked => {
+                                        root.activate(root.selected, true);
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 6px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: root.secondary-label;
+                                        color: Theme.ink-2;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                        vertical-alignment: center;
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 3px;
+                                        padding-top: 4px;
+                                        padding-bottom: 4px;
+                                        Keycap {
+                                            label: root.mod-key;
+                                        }
+
                                         Keycap {
                                             label: "↵";
                                         }

@@ -80,6 +80,13 @@ ICONS = {
     "login": [line("M14 3.5h3.5a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H14"), line("M9.5 16.5 14 12 9.5 7.5"), line("M14 12H3.5")],
     "wave": [line("M7.5 12.5V6a1.5 1.5 0 0 1 3 0v5"), line("M10.5 10.5V4.5a1.5 1.5 0 0 1 3 0v6"),
              line("M13.5 10.5V5.5a1.5 1.5 0 0 1 3 0V12"), shape("M16.5 9.5a1.5 1.5 0 0 1 3 0v4.5a7 7 0 0 1-7 7h-1a6 6 0 0 1-4.6-2.1L4 15.4a1.5 1.5 0 0 1 2.2-2.1l1.3 1.2V12.5")],
+    # A speaker with two waves: mute and the volume.
+    "volume": [shape("M3.5 9.5H7l5-4.5v14l-5-4.5H3.5Z"), line("M15.5 9a4 4 0 0 1 0 6"), line("M18.5 6.5a7.5 7.5 0 0 1 0 11")],
+    # A circle half dark: dark and light mode.
+    "contrast": [circle(12, 12, 9), shape("M12 3a9 9 0 0 1 0 18Z")],
+    # A bin with a lid: emptying it.
+    "trash": [shape("M6 7.5h12l-.9 12.1a1.5 1.5 0 0 1-1.5 1.4H8.4a1.5 1.5 0 0 1-1.5-1.4Z"), line("M4 7.5h16"),
+              line("M9.5 7.5V5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2.5"), cut("M10 11.5v5.5"), cut("M14 11.5v5.5")],
 }
 
 def svg(body):

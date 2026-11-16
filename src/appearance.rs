@@ -176,6 +176,7 @@ pub fn settings(config: &Config) -> Vec<Setting> {
     add("index", "File search", "Find files and folders by name as you type", "folder", 7, Some("files"), on_off(f.index));
     add("hidden", "Hidden files", "Names starting with a dot, like .config", "file", 7, Some("files"), on_off(f.hidden));
     add("gitignore", "Respect .gitignore", "Skip what a folder's .gitignore lists", "file", 7, Some("files"), on_off(f.gitignore));
+    add("recent", "Recent files", "What you open from Tendril, before you type", "file", 7, Some("files"), on_off(f.recent));
     let (choices, current) = on_off(crate::autostart::enabled());
     list.push(Setting {
         key: "login",
@@ -221,7 +222,7 @@ fn blur_styles() -> Option<(&'static [(&'static str, &'static str)], &'static st
 pub const LOOK: &[&str] = &["theme", "style", "selection", "icons", "blur", "blur_style", "opacity", "glow"];
 pub const LAYOUT: &[&str] = &["size", "favourites", "details", "quick_keys", "headings"];
 /// File search's settings, shown under their own heading.
-pub const FILES: &[&str] = &["index", "hidden", "gitignore"];
+pub const FILES: &[&str] = &["index", "hidden", "gitignore", "recent"];
 
 #[cfg(test)]
 mod tests {

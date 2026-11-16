@@ -30,6 +30,19 @@ pub struct Config {
     pub quicklink: Vec<Quicklink>,
     /// Text you paste by name, [[snippet]] in the file.
     pub snippet: Vec<Snippet>,
+    /// Your own words for things, [[alias]] in the file.
+    pub alias: Vec<Alias>,
+}
+
+/// A word of yours that always puts one thing first: "ps" for Photoshop.
+#[derive(Deserialize, Clone)]
+pub struct Alias {
+    pub word: String,
+    /// What it opens, by its id in the list.
+    pub id: String,
+    /// What that's called, to show in Settings.
+    #[serde(default)]
+    pub name: String,
 }
 
 /// Text kept to paste: found by its name or keyword.
@@ -142,8 +155,17 @@ pub struct Files {
     pub gitignore: bool,
     /// How many folders down to go.
     pub max_depth: usize,
-    /// Stops there, so a huge folder can't fill memory.
+    /// Stops there; 0 is no limit (big folders are walked more slowly instead).
     pub max_files: usize,
+    /// Files you open from Tendril, shown as Recent Files before you type.
+    pub recent: bool,
+}
+
+impl Files {
+    /// The settings that decide what's walked, for telling whether to walk again.
+    pub fn walk_rules(&self) -> Files {
+        Files { recent: true, ..self.clone() }
+    }
 }
 
 impl Default for Files {
@@ -157,7 +179,8 @@ impl Default for Files {
             hidden: false,
             gitignore: true,
             max_depth: 8,
-            max_files: 100_000,
+            max_files: 0,
+            recent: true,
         }
     }
 }
@@ -206,6 +229,7 @@ impl Default for Config {
             ],
             quicklink: vec![Quicklink { name: "GitHub repository".into(), keyword: "gh".into(), url: "https://github.com/{raw}".into() }],
             snippet: Vec::new(),
+            alias: Vec::new(),
         }
     }
 }
@@ -301,9 +325,12 @@ exclude_regex = []
 hidden = false
 # Skip what a folder's .gitignore (or .ignore) lists, wherever there is one.
 gitignore = true
-# How many folders down to go, and the most files to keep.
+# How many folders down to go, and the most files to keep (0: no limit; past the first 20,000 the
+# walk slows itself down and runs at low priority, so a big folder doesn't busy the computer).
 max_depth = 8
-max_files = 100000
+max_files = 0
+# Files you open from Tendril, listed as Recent Files before you type (kept in usage.toml).
+recent = true
 
 # Offered under your results as "Search <name> for …". {query} is what you typed.
 [[search]]
@@ -328,6 +355,9 @@ url = "https://github.com/{raw}"
 # name = "Sign-off"
 # keyword = "sig"
 # text = "Thanks,\nSam"
+
+# Aliases: your own word for an app, command, snippet or quicklink, which then always comes
+# first. Set them in Tendril: select something, Ctrl K, Set Alias. Settings → Aliases lists them.
 "#;
 
 /// The commented file, with this system's own default blur style.
@@ -374,6 +404,11 @@ pub fn load() -> Config {
                 Config::default()
             });
             undo_click_away_bug(&mut config);
+            // 0.3.0 wrote a limit of 100,000 files into every new file; there's no limit now.
+            if config.files.max_files == 100_000 {
+                config.files.max_files = 0;
+                let _ = set(Some("files"), "max_files", Value::Number(0.0));
+            }
             config
         }
         Err(_) => {

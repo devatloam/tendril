@@ -2,8 +2,7 @@
 
 use crate::calc;
 use crate::catalog::{Icon, Item, Kind, Run};
-use crate::config::{Engine, Quicklink};
-use crate::files::Index;
+use crate::config::{Alias, Engine, Quicklink};
 use crate::usage::Usage;
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Matcher, Utf32Str};
@@ -22,15 +21,19 @@ pub enum Line {
 const MAX_RESULTS: usize = 40;
 const SUGGESTIONS: usize = 6;
 
-pub fn lines(
-    query: &str,
-    catalog: &[Item],
-    files: &Index,
-    usage: &Usage,
-    engines: &[Engine],
-    links: &[Quicklink],
-    matcher: &mut Matcher,
-) -> Vec<Line> {
+/// What the list is made from.
+pub struct Sources<'a> {
+    pub catalog: &'a [Item],
+    /// Files matching what's typed, found on the file search thread (files.rs).
+    pub files: &'a [Item],
+    pub usage: &'a Usage,
+    pub aliases: &'a [Alias],
+    pub engines: &'a [Engine],
+    pub links: &'a [Quicklink],
+}
+
+pub fn lines(query: &str, s: &Sources, matcher: &mut Matcher) -> Vec<Line> {
+    let Sources { catalog, files, usage, aliases, engines, links } = *s;
     if crate::paths::is_path(query) {
         let found = crate::paths::entries(query);
         if found.is_empty() {
@@ -82,17 +85,16 @@ pub fn lines(
         }));
     }
 
-    let matches = ranked(query, catalog, usage, matcher);
-    let found = files.find(query);
+    let matches = ranked(query, catalog, usage, aliases, matcher);
     if !matches.is_empty() {
         lines.push(Line::Section("Results".into()));
         lines.extend(matches.into_iter().map(|i| Line::Item(i.clone())));
-    } else if lines.is_empty() && found.is_empty() {
+    } else if lines.is_empty() && files.is_empty() {
         lines.push(Line::Empty(format!("No apps or commands match “{}”", shorten(query, 40))));
     }
-    if !found.is_empty() {
+    if !files.is_empty() {
         lines.push(Line::Section("Files".into()));
-        lines.extend(found.into_iter().map(Line::Item));
+        lines.extend(files.iter().cloned().map(Line::Item));
     }
 
     lines.push(Line::Section(format!("Use “{}” with…", shorten(query, 40))));
@@ -133,6 +135,19 @@ fn root(catalog: &[Item], usage: &Usage) -> Vec<Line> {
     if !top.is_empty() {
         lines.push(Line::Favourites(top.iter().map(|i| (*i).clone()).collect()));
     }
+    // Files you opened from Tendril lately, those still there.
+    let recent: Vec<Item> = usage
+        .recent_files()
+        .iter()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+        .take(5)
+        .map(|p| crate::paths::item(false, p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), p))
+        .collect();
+    if !recent.is_empty() {
+        lines.push(Line::Section("Recent Files".into()));
+        lines.extend(recent.into_iter().map(Line::Item));
+    }
     lines.push(Line::Section("Commands".into()));
     lines.extend(
         catalog
@@ -146,9 +161,11 @@ fn root(catalog: &[Item], usage: &Usage) -> Vec<Line> {
     lines
 }
 
-fn ranked<'a>(query: &str, catalog: &'a [Item], usage: &Usage, matcher: &mut Matcher) -> Vec<&'a Item> {
+fn ranked<'a>(query: &str, catalog: &'a [Item], usage: &Usage, aliases: &[Alias], matcher: &mut Matcher) -> Vec<&'a Item> {
     let pattern = Pattern::new(query, CaseMatching::Ignore, Normalization::Smart, AtomKind::Fuzzy);
     let lower = query.to_lowercase();
+    // Your alias for something, typed exactly: that comes first, above everything you've picked.
+    let aliased: Vec<&str> = aliases.iter().filter(|a| a.word.eq_ignore_ascii_case(query.trim())).map(|a| a.id.as_str()).collect();
     let mut buf = Vec::new();
     let words: Vec<String> = lower.split_whitespace().map(str::to_string).collect();
     let mut scored: Vec<(u32, &Item)> = catalog
@@ -165,7 +182,8 @@ fn ranked<'a>(query: &str, catalog: &'a [Item], usage: &Usage, matcher: &mut Mat
             let other_words: Vec<&str> = other.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
             let described = words.iter().all(|q| other_words.iter().any(|w| w.starts_with(q.as_str())) || name.contains(q.as_str()));
             let other = described.then(|| 10 * lower.len() as u32);
-            let base = title.max(other)?;
+            let alias = if aliased.contains(&item.id.as_str()) { 1000 } else { 0 };
+            let base = title.max(other).or((alias > 0).then_some(alias))?;
             let starts = if name.starts_with(&lower) {
                 40
             } else if name.split([' ', '-', '_', '.']).any(|w| w.starts_with(&lower)) {
@@ -173,7 +191,7 @@ fn ranked<'a>(query: &str, catalog: &'a [Item], usage: &Usage, matcher: &mut Mat
             } else {
                 0
             };
-            Some((base + starts + usage.bonus(&item.id, query), item))
+            Some((base + alias + starts + usage.bonus(&item.id, query), item))
         })
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.title.len().cmp(&b.1.title.len())).then(a.1.title.cmp(&b.1.title)));
@@ -242,10 +260,14 @@ mod tests {
     use super::*;
     use crate::catalog::commands;
 
+    fn find(query: &str, catalog: &[Item], usage: &Usage, aliases: &[Alias], links: &[Quicklink]) -> Vec<Line> {
+        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
+        lines(query, &Sources { catalog, files: &[], usage, aliases, engines: &[], links }, &mut matcher)
+    }
+
     fn titles(query: &str, usage: &Usage) -> Vec<String> {
         let catalog = commands();
-        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
-        lines(query, &catalog, &Index::default(), usage, &[], &[], &mut matcher)
+        find(query, &catalog, usage, &[], &[])
             .into_iter()
             .filter_map(|l| match l {
                 Line::Item(i) if i.kind == Kind::Command => Some(i.title),
@@ -288,28 +310,36 @@ mod tests {
     #[test]
     fn says_when_nothing_matches() {
         let catalog = commands();
-        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
-        let lines = lines("zzqx", &catalog, &Index::default(), &Usage::default(), &[], &[], &mut matcher);
+        let lines = find("zzqx", &catalog, &Usage::default(), &[], &[]);
         assert!(matches!(lines.first(), Some(Line::Empty(m)) if m.contains("zzqx")));
-        let lines = lines_for_sum(&catalog, &mut matcher);
+        let lines = find("2+2", &catalog, &Usage::default(), &[], &[]);
         assert!(!lines.iter().any(|l| matches!(l, Line::Empty(_))), "a sum isn't 'nothing found'");
-    }
-
-    fn lines_for_sum(catalog: &[Item], matcher: &mut Matcher) -> Vec<Line> {
-        lines("2+2", catalog, &Index::default(), &Usage::default(), &[], &[], matcher)
     }
 
     #[test]
     fn quicklinks_take_text() {
         let links = vec![crate::config::Quicklink { name: "GitHub".into(), keyword: "gh".into(), url: "https://github.com/{raw}".into() }];
         let catalog = commands();
-        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
-        let found = lines("gh devatloam/tendril", &catalog, &Index::default(), &Usage::default(), &[], &links, &mut matcher);
+        let found = find("gh devatloam/tendril", &catalog, &Usage::default(), &[], &links);
         match &found[1] {
             Line::Item(item) => assert!(matches!(&item.run, Run::Url(u) if u == "https://github.com/devatloam/tendril")),
             _ => panic!("the quicklink comes first"),
         }
         assert_eq!(fill("https://x.test/?q={query}", "a b"), "https://x.test/?q=a+b");
+    }
+
+    #[test]
+    fn aliases_come_first() {
+        let catalog = commands();
+        let aliases = vec![Alias { word: "zz".into(), id: "cmd:shutdown".into(), name: "Shut Down".into() }];
+        let found = find("ZZ", &catalog, &Usage::default(), &aliases, &[]);
+        let first = found.iter().find_map(|l| if let Line::Item(i) = l { Some(i.title.as_str()) } else { None });
+        assert_eq!(first, Some("Shut Down"));
+        // Typed whole, an alias beats a closer name ("lo" would otherwise find Lock first).
+        let aliases = vec![Alias { word: "lo".into(), id: "cmd:logout".into(), name: "Log Out".into() }];
+        let found = find("lo", &catalog, &Usage::default(), &aliases, &[]);
+        let first = found.iter().find_map(|l| if let Line::Item(i) = l { Some(i.title.as_str()) } else { None });
+        assert_eq!(first, Some("Log Out"));
     }
 
     #[test]

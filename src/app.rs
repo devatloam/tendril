@@ -58,6 +58,8 @@ pub enum View {
     Appearance,
     Clipboard,
     Windows,
+    /// Typing a word for something (Set Alias in its actions).
+    Alias,
 }
 
 /// Where an update stands.
@@ -100,7 +102,13 @@ pub struct App {
     scanned_at: Cell<Option<Instant>>,
     scanning: Cell<bool>,
     /// Files found by name, from the last walk of the [files] folders.
-    files: RefCell<crate::files::Index>,
+    files: RefCell<std::sync::Arc<crate::files::Index>>,
+    /// Looks through iles on its own thread as you type.
+    finder: crate::files::Finder,
+    /// The last files found, and what was typed for them.
+    found_files: RefCell<(String, Vec<Item>)>,
+    /// What file search was last asked for, so it's asked once per thing typed.
+    asked_files: RefCell<String>,
     /// The [files] rules the last walk used, and when it started: a change to them, or enough
     /// time, means walking again.
     indexed_with: RefCell<Option<config::Files>>,
@@ -139,6 +147,13 @@ pub struct App {
     restart_after_onboarding: Cell<bool>,
     /// For each Ctrl+number, the row it opens.
     quick: RefCell<Vec<usize>>,
+    /// What you searched for before opening something, newest first, for ↑ to bring back. Kept
+    /// only while Tendril runs.
+    searches: RefCell<Vec<String>>,
+    /// Which of `searches` ↑ has brought back, while you're going through them.
+    recall: Cell<Option<usize>>,
+    /// What an alias is being typed for, in the Set Alias view.
+    aliasing: RefCell<Option<Item>>,
 }
 
 /// Something the actions panel can do with the selected item.
@@ -163,6 +178,8 @@ enum Act {
     OpenWith(PathBuf),
     /// The file itself on the clipboard, to paste somewhere.
     CopyFile(PathBuf),
+    /// Your own word for it (the Set Alias view).
+    SetAlias,
     /// A file or folder to the Recycle Bin or Trash, after asking.
     Trash(PathBuf),
 }
@@ -194,6 +211,9 @@ impl App {
             scanned_at: Cell::new(None),
             scanning: Cell::new(false),
             files: RefCell::default(),
+            finder: crate::files::Finder::new(|query, items| with_app(|a| a.files_found(query, items))),
+            found_files: RefCell::default(),
+            asked_files: RefCell::default(),
             indexed_with: RefCell::new(None),
             indexed_at: Cell::new(None),
             tell_indexed: Cell::new(false),
@@ -215,6 +235,9 @@ impl App {
             onboarding: Cell::new(None),
             restart_after_onboarding: Cell::new(false),
             quick: RefCell::default(),
+            searches: RefCell::default(),
+            recall: Cell::new(None),
+            aliasing: RefCell::new(None),
         });
         APP.with_borrow_mut(|a| *a = Some(app.clone()));
         app.wire(ui);
@@ -226,7 +249,12 @@ impl App {
 
     fn wire(&self, ui: &Launcher) {
         ui.set_mod_key(if cfg!(target_os = "macos") { "⌘".into() } else { "Ctrl".into() });
-        ui.on_query_edited(|q| with_app(|a| a.refresh(&q)));
+        ui.on_query_edited(|q| {
+            with_app(|a| {
+                a.recall.set(None);
+                a.refresh(&q);
+            })
+        });
         ui.on_move(|d| with_app(|a| a.move_by(d)));
         ui.on_hover(|i, x, y| with_app(|a| a.hover(i, x, y)));
         ui.on_activate(|i, alt| with_app(|a| a.activate(i, alt)));
@@ -313,6 +341,7 @@ impl App {
             View::Appearance => ("palette", "Appearance", "Search settings…"),
             View::Clipboard => ("clipboard", "Clipboard History", "Search what you've copied…"),
             View::Windows => ("windows", "Switch Windows", "Search open windows…"),
+            View::Alias => ("link", "Set Alias", "Type a short word…"),
         };
         ui.set_context_icon(self.icons.borrow_mut().builtin_solid(icon));
         // Blue: Tendril's one colour, as blue leads on Blight's dashboard.
@@ -340,6 +369,7 @@ impl App {
     fn leave_view(&self, ui: &Launcher) {
         self.view.set(View::Root);
         self.windows.borrow_mut().clear();
+        self.aliasing.take();
         ui.set_query(SharedString::new());
         self.set_context(ui);
         self.refresh("");
@@ -417,7 +447,7 @@ impl App {
         if self.scanned_at.get().is_none_or(|t| t.elapsed() > RESCAN_AFTER) {
             self.rescan(false);
         }
-        if self.indexed_with.borrow().as_ref() != Some(&self.config.borrow().files)
+        if self.indexed_with.borrow().as_ref() != Some(&self.config.borrow().files.walk_rules())
             || self.indexed_at.get().is_none_or(|t| t.elapsed() > REINDEX_AFTER)
         {
             self.index_files(false);
@@ -577,6 +607,7 @@ impl App {
             ui.set_toast(SharedString::new());
             ui.set_query(SharedString::new());
         }
+        self.recall.set(None);
         self.hidden_at.set(Some(Instant::now()));
         if self.usage_changed.replace(false) {
             self.usage.borrow().save();
@@ -633,6 +664,12 @@ impl App {
         catalog.extend(crate::catalog::commands());
         catalog.extend(crate::catalog::quicklinks(&self.config.borrow().quicklink));
         catalog.extend(crate::snippets::items(&self.config.borrow().snippet));
+        // An alias is also a keyword, so its first letters find it too.
+        for alias in &self.config.borrow().alias {
+            if let Some(item) = catalog.iter_mut().find(|i| i.id == alias.id) {
+                item.keywords = format!("{} {}", alias.word, item.keywords);
+            }
+        }
         *self.browser.borrow_mut() = crate::browser::icon(&catalog);
         for item in &mut catalog {
             self.decorate(item);
@@ -673,7 +710,11 @@ impl App {
         let selected = self.selected_item();
         if self.config.borrow().appearance.details
             && let Some(item) = selected
-            && self.icons.borrow().key(&item.icon, crate::icons::DETAIL).is_some_and(|k| arrived.contains(&k))
+            && (self.icons.borrow().key(&item.icon, crate::icons::DETAIL).is_some_and(|k| arrived.contains(&k))
+                || item.path.as_ref().is_some_and(|p| {
+                    let picture = crate::catalog::Icon::File(p.clone());
+                    self.icons.borrow().key(&picture, crate::icons::PREVIEW).is_some_and(|k| arrived.contains(&k))
+                }))
         {
             ui.set_detail(self.detail(&item));
         }
@@ -716,12 +757,12 @@ impl App {
             return;
         }
         let files = self.config.borrow().files.clone();
-        *self.indexed_with.borrow_mut() = Some(files.clone());
+        *self.indexed_with.borrow_mut() = Some(files.walk_rules());
         if !files.index {
             // Off means nothing kept about your files either.
             let _ = crate::files::forget();
             crate::files::set_off();
-            *self.files.borrow_mut() = crate::files::Index::default();
+            *self.files.borrow_mut() = Default::default();
             if tell {
                 self.toast("File search is off. Appearance can turn it on.", false);
             }
@@ -759,7 +800,7 @@ impl App {
             }
             "files" => {
                 crate::files::forget().map_err(|e| e.to_string())?;
-                *self.files.borrow_mut() = crate::files::Index::default();
+                *self.files.borrow_mut() = Default::default();
                 *self.indexed_with.borrow_mut() = None;
                 self.indexed_at.set(None);
                 "File index deleted. It's made again the next time Tendril opens."
@@ -787,10 +828,38 @@ impl App {
         Ok(said.into())
     }
 
+    /// Files for what's typed: what the file search thread found for it, or, until it says, what
+    /// it found for the start of it (one letter fewer, usually), so the list doesn't jump about.
+    /// Asks the thread the first time each thing is typed.
+    fn files_for(&self, query: &str) -> Vec<Item> {
+        let query = query.trim();
+        if query.chars().count() < 2 || crate::paths::is_path(query) || self.files.borrow().len() == 0 {
+            return Vec::new();
+        }
+        if *self.asked_files.borrow() != query {
+            *self.asked_files.borrow_mut() = query.to_string();
+            self.finder.ask(query, self.files.borrow().clone());
+        }
+        let found = self.found_files.borrow();
+        if query.starts_with(found.0.as_str()) && !found.0.is_empty() { found.1.clone() } else { Vec::new() }
+    }
+
+    /// Files the file search thread found. Shown if they're still for what's typed.
+    fn files_found(&self, query: String, items: Vec<Item>) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        if ui.get_query().trim() != query || self.view.get() != View::Root {
+            return;
+        }
+        *self.found_files.borrow_mut() = (query.clone(), items);
+        let keep = self.selected_item().map(|i| i.id);
+        self.refresh_keeping(&query, keep.as_deref());
+    }
+
     /// Last run's index, while the walk runs. Only taken if the walk hasn't finished first.
     fn files_cached(&self, index: crate::files::Index) {
         if crate::files::walking() && self.files.borrow().len() == 0 {
-            *self.files.borrow_mut() = index;
+            *self.files.borrow_mut() = std::sync::Arc::new(index);
+            self.asked_files.borrow_mut().clear();
             if let Some(ui) = self.ui.upgrade()
                 && !ui.get_query().is_empty()
             {
@@ -813,10 +882,11 @@ impl App {
 
     fn files_indexed(&self, index: crate::files::Index) {
         let count = index.len();
-        *self.files.borrow_mut() = index;
+        *self.files.borrow_mut() = std::sync::Arc::new(index);
+        self.asked_files.borrow_mut().clear();
         self.set_busy(false);
         // The rules changed while it walked (in Settings, say): walk again with the new ones.
-        if self.indexed_with.borrow().as_ref() != Some(&self.config.borrow().files) {
+        if self.indexed_with.borrow().as_ref() != Some(&self.config.borrow().files.walk_rules()) {
             self.index_files(false);
         }
         crate::settings::refresh();
@@ -1126,17 +1196,20 @@ impl App {
             self.clipboard_lines(query)
         } else if self.view.get() == View::Windows {
             self.window_lines(query)
+        } else if self.view.get() == View::Alias {
+            self.alias_lines(query, &config)
         } else {
             let mut lines = if query.trim().is_empty() { self.update_lines() } else { Vec::new() };
-            lines.extend(search::lines(
-                query,
-                &self.catalog.borrow(),
-                &self.files.borrow(),
-                &self.usage.borrow(),
-                &config.search,
-                &config.quicklink,
-                &mut self.matcher.borrow_mut(),
-            ));
+            let files = self.files_for(query);
+            let sources = search::Sources {
+                catalog: &self.catalog.borrow(),
+                files: &files,
+                usage: &self.usage.borrow(),
+                aliases: &config.alias,
+                engines: &config.search,
+                links: &config.quicklink,
+            };
+            lines.extend(search::lines(query, &sources, &mut self.matcher.borrow_mut()));
             for line in &mut lines {
                 if let Line::Item(item) = line {
                     self.decorate(item);
@@ -1346,6 +1419,70 @@ impl App {
         lines
     }
 
+    /// Set Alias: what typing the word will open, ready to save with Enter.
+    fn alias_lines(&self, query: &str, config: &Config) -> Vec<Line> {
+        let Some(target) = self.aliasing.borrow().clone() else { return Vec::new() };
+        let word = query.trim().to_lowercase();
+        let mut lines = vec![Line::Section(format!("Alias for {}", target.title))];
+        let now = config.alias.iter().find(|a| a.id == target.id).map(|a| a.word.clone());
+        if word.is_empty() {
+            match &now {
+                // Its alias now, with Enter to take it away; typing a word changes it.
+                Some(w) => {
+                    let mut item = target.clone();
+                    item.id = "alias-remove".into();
+                    item.title = format!("Remove “{w}”");
+                    item.subtitle = "Or type another word to change it".into();
+                    item.kind = Kind::Command;
+                    item.run = Run::SaveAlias(String::new());
+                    item.path = None;
+                    lines.push(Line::Item(item));
+                }
+                None => lines.push(Line::Empty(format!("Type a short word that will always find {}", target.title))),
+            }
+            return lines;
+        }
+        if word.contains(char::is_whitespace) {
+            lines.push(Line::Empty("One word, without spaces".into()));
+            return lines;
+        }
+        let taken = config.alias.iter().find(|a| a.word == word && a.id != target.id);
+        let subtitle = match (taken, &now) {
+            (Some(a), _) => format!("Instead of {}, which has it now", if a.name.is_empty() { &a.id } else { &a.name }),
+            (None, Some(old)) => format!("In place of “{old}”"),
+            (None, None) => "Press Enter to keep it".into(),
+        };
+        let mut item = target.clone();
+        item.id = "alias-save".into();
+        item.title = format!("“{word}” opens {}", target.title);
+        item.subtitle = subtitle;
+        item.kind = Kind::Command;
+        item.run = Run::SaveAlias(word);
+        item.path = None;
+        lines.push(Line::Item(item));
+        lines
+    }
+
+    /// Keeps `word` as the alias for `target`, in place of its old one and of anything else's
+    /// use of the word.
+    fn save_alias(&self, word: Option<&str>, target: &Item) -> Result<(), String> {
+        let mut aliases = self.config.borrow().alias.clone();
+        aliases.retain(|a| a.id != target.id && Some(a.word.as_str()) != word);
+        if let Some(word) = word {
+            aliases.push(config::Alias { word: word.to_string(), id: target.id.clone(), name: target.title.clone() });
+        }
+        let entries: Vec<Vec<(&str, config::Value)>> = aliases
+            .iter()
+            .map(|a| {
+                vec![("word", config::Value::Text(&a.word)), ("id", config::Value::Text(&a.id)), ("name", config::Value::Text(&a.name))]
+            })
+            .collect();
+        config::set_list("alias", &entries).map_err(|e| e.to_string())?;
+        *self.config.borrow_mut() = config::load();
+        self.rebuild_catalog();
+        Ok(())
+    }
+
     /// Clipboard History's rows: copies, newest first, narrowed by what's typed.
     fn clipboard_lines(&self, query: &str) -> Vec<Line> {
         if !self.config.borrow().clipboard_history {
@@ -1460,6 +1597,9 @@ impl App {
             }
         }
         ui.set_primary_label(item.as_ref().map_or("", |i| i.verb()).into());
+        // Ctrl Enter's action, said beside Enter's.
+        let second = item.as_ref().and_then(|i| actions_for(i, &self.usage.borrow()).get(1).map(|a| describe(a, i, true).0));
+        ui.set_secondary_label(second.unwrap_or_default().into());
         if self.config.borrow().appearance.details {
             ui.set_detail(item.map(|i| self.detail(&i)).unwrap_or_default());
         }
@@ -1502,6 +1642,18 @@ impl App {
         if let Some(path) = &item.path {
             fact("File", path.to_string_lossy().into_owned());
         }
+        // One file's details, read when it's selected.
+        if item.kind == Kind::File
+            && let Some(meta) = item.path.as_ref().and_then(|p| std::fs::metadata(p).ok())
+        {
+            if meta.is_file() {
+                fact("Size", if meta.len() == 0 { "Empty".into() } else { crate::data::human(meta.len()) });
+            }
+            if let Ok(changed) = meta.modified() {
+                let seconds = std::time::SystemTime::now().duration_since(changed).map_or(0, |d| d.as_secs());
+                fact("Changed", ago(seconds));
+            }
+        }
         if matches!(item.kind, Kind::Application | Kind::Command) && !matches!(item.run, Run::Setting(_)) {
             match self.usage.borrow().stats(&item.id) {
                 Some((count, last)) => {
@@ -1529,6 +1681,9 @@ impl App {
             Kind::Fallback => "Web",
             k => k.label(),
         };
+        let preview =
+            item.path.as_deref().filter(|_| item.kind == Kind::File && is_picture(item)).and_then(|p| self.icons.borrow_mut().preview(p));
+        let (preview, preview_width, preview_height) = preview.unwrap_or_default();
         Detail {
             icon,
             tint,
@@ -1536,6 +1691,9 @@ impl App {
             subtitle: subtitle.into(),
             kind: kind.into(),
             facts: ModelRc::new(VecModel::from(facts)),
+            preview,
+            preview_width,
+            preview_height,
         }
     }
 
@@ -1622,8 +1780,13 @@ impl App {
         self.start_clipboard();
         self.apply_theme();
         self.apply_appearance();
-        if self.config.borrow().files != before.files {
+        if self.config.borrow().files.walk_rules() != before.files.walk_rules() {
             self.index_files(false);
+        }
+        // Recent Files turned off: what was listed goes too.
+        if !self.config.borrow().files.recent && before.files.recent {
+            self.usage.borrow_mut().forget_recent();
+            self.usage.borrow().save();
         }
         self.refresh_keeping(&ui.get_query(), Some(&format!("setting:{key}")));
         let after = self.config.borrow().appearance.clone();
@@ -1670,6 +1833,23 @@ impl App {
             return;
         }
         let current = ui.get_selected();
+        // ↑ on the first row, with nothing typed (or a search ↑ brought back): the searches
+        // before it, newest first.
+        if delta == -1
+            && current == selectable[0]
+            && self.view.get() == View::Root
+            && (ui.get_query().is_empty() || self.recall.get().is_some())
+        {
+            let next = self.recall.get().map_or(0, |i| i + 1);
+            let search = self.searches.borrow().get(next).cloned();
+            if let Some(search) = search {
+                self.recall.set(Some(next));
+                ui.set_query(search.as_str().into());
+                ui.invoke_caret_to_end();
+                self.refresh(&search);
+                return;
+            }
+        }
         // On the tiles, ↑ and ↓ go a whole row of tiles at a time, then on to the list.
         let tiles = self.tiles();
         if delta.abs() == 1
@@ -1744,9 +1924,12 @@ impl App {
     /// Does what Enter does for an item.
     fn run(&self, item: &Item, record: bool) {
         let Some(ui) = self.ui.upgrade() else { return };
-        if let Run::Power(power) = &item.run
-            && let Some((title, message, label)) = power.confirmation()
-        {
+        let question = match &item.run {
+            Run::Power(power) => power.confirmation(),
+            Run::System(s) => s.confirmation(),
+            _ => None,
+        };
+        if let Some((title, message, label)) = question {
             ui.set_confirm_title(title.into());
             ui.set_confirm_message(message.into());
             ui.set_confirm_label(label.into());
@@ -1763,12 +1946,25 @@ impl App {
         if item.id == "whats-new" {
             self.updated_from.borrow_mut().take();
         }
+        let query = ui.get_query().trim().to_string();
+        if record && !query.is_empty() && self.view.get() == View::Root {
+            let mut searches = self.searches.borrow_mut();
+            searches.retain(|s| *s != query);
+            searches.insert(0, query);
+            searches.truncate(30);
+        }
         if record
             && item.id != "whats-new"
             && !matches!(item.kind, Kind::Calculator | Kind::File | Kind::Clip | Kind::Window)
             && !matches!(
                 item.run,
-                Run::Setting(_) | Run::Shortcut | Run::InstallUpdate | Run::InstallPreview | Run::RestartToUpdate | Run::Prefill(_)
+                Run::Setting(_)
+                    | Run::Shortcut
+                    | Run::InstallUpdate
+                    | Run::InstallPreview
+                    | Run::RestartToUpdate
+                    | Run::Prefill(_)
+                    | Run::SaveAlias(_)
             )
         {
             self.usage.borrow_mut().record(&item.id, &ui.get_query());
@@ -1777,6 +1973,12 @@ impl App {
         let outcome = match &item.run {
             Run::App(launch) => apps::launch(launch).map_err(|e| e.to_string()).map(|_| Done::Hide),
             Run::Power(power) => system::power(*power).map_err(|e| e.to_string()).map(|_| Done::Hide),
+            Run::System(s) => system::system(*s).map_err(|e| e.to_string()).map(|said| match (s.stays_open(), said) {
+                // The volume: stay, to press Enter again.
+                (true, said) => Done::Toast(if said.is_empty() { s.describe().1.to_string() } else { said.to_string() }, false),
+                (false, "") => Done::Hide,
+                (false, said) => Done::Toast(said.to_string(), true),
+            }),
             Run::Url(url) => system::open(url).map_err(|e| e.to_string()).map(|_| Done::Hide),
             Run::Copy(text) => system::copy(text).map(|_| Done::Toast("Copied to clipboard".into(), true)),
             Run::Settings => {
@@ -1809,7 +2011,13 @@ impl App {
                 self.refresh(&next);
                 Ok(Done::Stay)
             }
-            Run::Path(path, false) => system::open(&path.to_string_lossy()).map_err(|e| e.to_string()).map(|_| Done::Hide),
+            Run::Path(path, false) => system::open(&path.to_string_lossy()).map_err(|e| e.to_string()).map(|_| {
+                if self.config.borrow().files.recent {
+                    self.usage.borrow_mut().opened_file(&path.to_string_lossy());
+                    self.usage_changed.set(true);
+                }
+                Done::Hide
+            }),
             Run::Prefill(text) => {
                 ui.set_query(text.as_str().into());
                 ui.invoke_caret_to_end();
@@ -1850,6 +2058,19 @@ impl App {
                     Ok(()) => Ok(Done::Toast("Copied. Paste it where you like.".into(), true)),
                     Err(e) => Err(e),
                 }
+            }
+            Run::SaveAlias(word) => {
+                let target = self.aliasing.borrow().clone();
+                let Some(target) = target else { return };
+                let word = (!word.is_empty()).then_some(word.as_str());
+                self.save_alias(word, &target).map(|()| {
+                    self.leave_view(&ui);
+                    let said = match word {
+                        Some(w) => format!("“{w}” now opens {}", target.title),
+                        None => format!("{} has no alias now", target.title),
+                    };
+                    Done::Toast(said, false)
+                })
             }
             Run::Snippet(text) => {
                 let text = crate::snippets::expand(text, clipboard::read().as_deref());
@@ -1944,7 +2165,8 @@ impl App {
             if yes {
                 match system::trash(&path) {
                     Ok(()) => {
-                        self.files.borrow_mut().remove(&path);
+                        std::sync::Arc::make_mut(&mut self.files.borrow_mut()).remove(&path);
+                        self.found_files.borrow_mut().1.retain(|i| i.path.as_deref().is_none_or(|p| !p.starts_with(&path)));
                         self.toast(&format!("Moved to the {}", system::trash_name()), false);
                         self.refresh(&ui.get_query());
                     }
@@ -1957,11 +2179,20 @@ impl App {
         if let (true, Some(item)) = (yes, pending) {
             self.usage.borrow_mut().record(&item.id, &ui.get_query());
             self.usage_changed.set(true);
-            if let Run::Power(power) = item.run {
-                match system::power(power) {
-                    Ok(()) => window::hide(&ui),
-                    Err(e) => self.toast(&format!("Couldn't do that: {e}"), true),
+            let done = match item.run {
+                Run::Power(power) => system::power(power).map(|()| ""),
+                Run::System(s) => system::system(s),
+                _ => return,
+            };
+            match done {
+                Ok("") => window::hide(&ui),
+                Ok(said) => {
+                    self.toast(said, false);
+                    Timer::single_shot(Duration::from_millis(600), || {
+                        with_app(|a| a.ui.upgrade().map(|ui| window::hide(&ui)).unwrap_or_default())
+                    });
                 }
+                Err(e) => self.toast(&format!("Couldn't do that: {e}"), true),
             }
         }
     }
@@ -2078,6 +2309,12 @@ impl App {
                 Ok(()) => window::hide(ui),
                 Err(e) => self.toast(&format!("Couldn't open it: {e}"), true),
             },
+            Act::SetAlias => {
+                *self.aliasing.borrow_mut() = Some(item.clone());
+                ui.set_actions_open(false);
+                self.open_view(View::Alias);
+                ui.invoke_focus_search();
+            }
             Act::CopyFile(path) => match system::copy_file(&path) {
                 Ok(()) => self.toast("Copied. Paste it into a folder or a chat.", false),
                 Err(e) => self.toast(&format!("Couldn't copy it: {e}"), true),
@@ -2219,6 +2456,13 @@ fn actions_for(item: &Item, usage: &Usage) -> Vec<Act> {
     if matches!(item.kind, Kind::Application | Kind::Command | Kind::Link | Kind::Snippet) && !item.id.starts_with("cmd:ms-settings") {
         acts.push(Act::Pin(usage.is_pinned(&item.id)));
     }
+    if matches!(item.kind, Kind::Application | Kind::Command | Kind::Link | Kind::Snippet)
+        && !matches!(item.run, Run::Setting(_) | Run::Shortcut | Run::SaveAlias(_))
+        && !item.id.starts_with("update")
+        && item.id != "whats-new"
+    {
+        acts.push(Act::SetAlias);
+    }
     if item.kind == Kind::Application || item.kind == Kind::Command {
         acts.push(Act::Copy("name", item.title.clone()));
         if usage.bonus(&item.id, "") > 0 {
@@ -2248,11 +2492,21 @@ fn describe(act: &Act, item: &Item, second: bool) -> (String, &'static str, Vec<
         Act::RunAsAdmin(_) => ("Run as Administrator".into(), "open", keys, false),
         Act::OpenWith(_) => ("Open With…".into(), "open", keys, false),
         Act::CopyFile(_) => ("Copy File".into(), "copy", keys, false),
+        Act::SetAlias => ("Set Alias…".into(), "link", keys, false),
         Act::Trash(_) => (format!("Move to {}", system::trash_name()), "eraser", keys, true),
     }
 }
 
 /// "3 hours ago", from a number of seconds.
+/// A picture Tendril can show in the details pane, and not so big that reading it takes long.
+fn is_picture(item: &Item) -> bool {
+    const PICTURES: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"];
+    item.path.as_ref().is_some_and(|p| {
+        let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        PICTURES.contains(&ext.as_str()) && std::fs::metadata(p).is_ok_and(|m| m.len() < 40 * 1024 * 1024)
+    })
+}
+
 pub fn ago(seconds: u64) -> String {
     let (minutes, hours, days) = (seconds / 60, seconds / 3600, seconds / 86_400);
     match () {

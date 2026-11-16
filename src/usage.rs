@@ -16,7 +16,12 @@ pub struct Usage {
     /// What you pinned to your favourites, in the order you pinned it.
     #[serde(default)]
     pinned: Vec<String>,
+    /// Files you opened from Tendril, newest first, for Recent Files.
+    #[serde(default)]
+    recent: Vec<String>,
 }
+
+const MAX_RECENT: usize = 8;
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 struct Use {
@@ -90,10 +95,26 @@ impl Usage {
         }
     }
 
-    /// Forgets what you've opened and picked; your favourites stay pinned.
+    /// Forgets what you've opened and picked, recent files too; your favourites stay pinned.
     pub fn forget_all(&mut self) {
         self.items.clear();
         self.picks.clear();
+        self.recent.clear();
+    }
+
+    /// A file you opened from Tendril, for Recent Files.
+    pub fn opened_file(&mut self, path: &str) {
+        self.recent.retain(|p| p != path);
+        self.recent.insert(0, path.to_string());
+        self.recent.truncate(MAX_RECENT);
+    }
+
+    pub fn recent_files(&self) -> &[String] {
+        &self.recent
+    }
+
+    pub fn forget_recent(&mut self) {
+        self.recent.clear();
     }
 
     pub fn forget(&mut self, id: &str) {
@@ -150,5 +171,18 @@ mod tests {
         assert_eq!(usage.top(1), vec!["app:firefox"]);
         usage.forget("app:firefox");
         assert_eq!(usage.bonus("app:firefox", "f"), 0);
+    }
+
+    #[test]
+    fn recent_files_newest_first() {
+        let mut usage = Usage::default();
+        for i in 0..10 {
+            usage.opened_file(&format!("/f{i}"));
+        }
+        usage.opened_file("/f3");
+        assert_eq!(usage.recent_files().len(), super::MAX_RECENT);
+        assert_eq!(usage.recent_files()[..2], ["/f3".to_string(), "/f9".to_string()]);
+        usage.forget_all();
+        assert!(usage.recent_files().is_empty());
     }
 }

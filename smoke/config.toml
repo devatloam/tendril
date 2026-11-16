@@ -1,0 +1,124 @@
+# Tendril's settings. Saved changes apply the next time the window opens.
+# Most of these can also be changed from Tendril itself: search for "Appearance".
+
+# The keys that open Tendril from anywhere, like "Alt+Space", "Ctrl+Shift+Space" or "Super+KeyF".
+# On Wayland, bind `tendril toggle` in your compositor instead: global keys are an X11, Windows and macOS thing.
+hotkey = "Ctrl+Shift+KeyK"
+
+# "system" follows your light or dark setting, with the two palettes below.
+# Or name one palette to always use it: ember, midnight, moss, dusk, black, paper, sepia, mist.
+theme = "system"
+dark_theme = "ember"
+light_theme = "paper"
+
+# Close when you click somewhere else.
+hide_on_blur = true
+
+# Set once you've been through the first-run walkthrough ("Set Up Tendril" runs it again).
+onboarded = true
+
+# New versions: "auto" downloads and installs them (used from the next start), "notify" only
+# offers them, "off" never asks. Checking is the one thing Tendril sends anywhere: a request to
+# GitHub for the latest release, every six hours while it runs.
+updates = "auto"
+
+# Preview versions are built every night from the newest changes, before they're in a release, so they get new things
+# first and can be rough. "ask" offers the newest one beside updates, "always" installs them as
+# they come (and the next release once it's newer), "never" sticks to releases.
+previews = "ask"
+
+# Keep text you copy (up to 200 copies) for Clipboard History. It's kept on this computer only, in
+# clipboard.json next to usage.toml. Copies a password manager marks as secret are skipped where the
+# system shows the mark (Windows, and KDE on X11). Turning this off deletes what's kept.
+clipboard_history = true
+
+# Show your quicklinks with their sites' own icons. Each site's icon is fetched once, from that site
+# only, and kept in the cache folder.
+site_icons = true
+
+[appearance]
+# See through the window, with what's behind it blurred. On Linux under X11 this costs nothing
+# extra and is on to start with; on Windows, macOS and Wayland it switches Tendril to drawing with
+# the GPU, which keeps tens of megabytes more while Tendril runs, so it starts off there. Blur itself comes from the system: Windows'
+# acrylic, macOS' vibrancy, KDE, or your compositor's blur setting (Hyprland, picom, …).
+blur = false
+# The kind of see-through, where the system has more than one. Windows: "acrylic" (blurs what's
+# behind), "mica" (tinted by your wallpaper), "mica-alt" (a stronger tint) or "blur" (Windows 10).
+# macOS: "hud", "popover", "sidebar", "menu" or "under-window". Linux leaves it to the compositor.
+blur_style = "acrylic"
+# How solid the window is while blurred, from 0.4 to 1.
+opacity = 0.78
+# Colour glowing behind the list: "off", "still", or "drift" (moves slowly; redraws while open).
+glow = "off"
+# The line under the search field in Blight's clay, blue and green.
+gradient_divider = false
+# "flat" draws plain fills, on the CPU. "modern" adds gradients and sheens, and draws with the GPU
+# to keep their corners round, which keeps tens of megabytes more while Tendril runs.
+style = "flat"
+# The selected row: a "white" wash, or a soft "blue" one.
+selection = "white"
+# The squares behind icons: "subtle", or "bold" (with a blue selection, the selected one turns blue).
+icons = "subtle"
+# "regular" (750 × 474) or "compact" (narrower, shorter rows, no bar along the bottom).
+size = "regular"
+# A pane beside the list with the selected item's details.
+details = false
+# How what you use most shows before you type: "grid" or "list".
+favourites = "grid"
+# Ctrl 1–9 open the first nine rows, shown where the labels were.
+quick_keys = false
+# "Results", "Commands" and the like above each group.
+headings = true
+
+[files]
+# Find files and folders by name as you type. The folders below are looked through when Tendril
+# starts and again when you open it after a while; only names and paths are kept, in memory.
+index = true
+# Where to look. Empty means your usual folders: Desktop, Documents, Downloads, Pictures, Music
+# and Videos. Or list your own: folders = ["~/Documents", "~/Projects", "D:/Work"].
+folders = []
+# Only files matching one of these, like ["*.pdf", "*.docx"]. Empty means every file.
+include = []
+# Left out, written like a .gitignore line: "node_modules" is any file or folder by that name,
+# "*.log" any name ending so, "~/Downloads/old" that one folder.
+exclude = ["node_modules", "__pycache__"]
+# Left out when the whole path matches one of these regular expressions (written with / between
+# folders on every system), like ["/build/", "\\.(tmp|bak)$"].
+exclude_regex = []
+# Names starting with a dot, like .config or .git (and files Windows marks hidden).
+hidden = false
+# Skip what a folder's .gitignore (or .ignore) lists, wherever there is one.
+gitignore = true
+# How many folders down to go, and the most files to keep (0: no limit; past the first 20,000 the
+# walk slows itself down and runs at low priority, so a big folder doesn't busy the computer).
+max_depth = 8
+max_files = 0
+# Files you open from Tendril, listed as Recent Files before you type (kept in usage.toml).
+recent = true
+
+# Offered under your results as "Search <name> for …". {query} is what you typed.
+[[search]]
+name = "Google"
+url = "https://www.google.com/search?q={query}"
+
+[[search]]
+name = "DuckDuckGo"
+url = "https://duckduckgo.com/?q={query}"
+
+# Your own links. Type the keyword, a space and some text: {query} is that text made safe for a
+# web address, {raw} is it as typed. A link with neither is a bookmark you find by its name.
+# Folders and files work too: url = "~/Projects".
+[[quicklink]]
+name = "GitHub repository"
+keyword = "gh"
+url = "https://github.com/{raw}"
+
+# Snippets: text you paste by finding it by name or keyword. {date}, {time} and {clipboard} are
+# filled in as it's pasted, and \n starts a new line. Settings → Snippets edits these too.
+# [[snippet]]
+# name = "Sign-off"
+# keyword = "sig"
+# text = "Thanks,\nSam"
+
+# Aliases: your own word for an app, command, snippet or quicklink, which then always comes
+# first. Set them in Tendril: select something, Ctrl K, Set Alias. Settings → Aliases lists them.

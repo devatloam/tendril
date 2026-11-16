@@ -1,0 +1,1 @@
+install: exe there: True; Start menu entry: True; starts at sign-in: '"C:\Users\runneradmin\AppData\Local\Programs\Tendril\tendril.exe" --hidden'; in Settings > Apps: True

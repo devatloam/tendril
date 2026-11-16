@@ -40,6 +40,8 @@ thread_local! {
     static FILE_LISTS: RefCell<FileLists> = const { RefCell::new(FileLists { folders: Vec::new(), include: Vec::new(), exclude: Vec::new(), exclude_regex: Vec::new() }) };
     /// A change waiting for "Turn On" in the GPU question.
     static PENDING: Cell<Option<(&'static str, i32)>> = const { Cell::new(None) };
+    /// The tab that was showing before the search box took over, to go back to when it's cleared.
+    static BEFORE_SEARCH: Cell<i32> = const { Cell::new(0) };
     /// Something kept, waiting for "Delete" in the confirm dialog.
     static PENDING_DELETE: Cell<Option<&'static str>> = const { Cell::new(None) };
 }
@@ -293,28 +295,7 @@ fn ask_delete(key: &str) {
 fn choices(w: &SettingsWindow, config: &config::Config) {
     let all = appearance::settings(config);
     let groups = |groups: Groups| -> ModelRc<ChoiceGroup> {
-        let made: Vec<ChoiceGroup> = groups
-            .iter()
-            .filter_map(|(title, keys)| {
-                let choices: Vec<Choice> = keys
-                    .iter()
-                    .filter_map(|k| all.iter().find(|s| s.key == *k))
-                    .map(|s| {
-                        let labels: Vec<SharedString> = s.choices.iter().map(|(l, _)| l.as_str().into()).collect();
-                        let toggle = labels.len() == 2 && labels[0] == "On" && labels[1] == "Off";
-                        Choice {
-                            key: s.key.into(),
-                            title: s.title.into(),
-                            about: s.about.as_str().into(),
-                            labels: ModelRc::new(VecModel::from(labels)),
-                            current: s.current as i32,
-                            toggle,
-                        }
-                    })
-                    .collect();
-                (!choices.is_empty()).then(|| ChoiceGroup { title: (*title).into(), choices: ModelRc::new(VecModel::from(choices)) })
-            })
-            .collect();
+        let made: Vec<ChoiceGroup> = groups.iter().filter_map(|(title, keys)| group(&all, title, keys)).collect();
         ModelRc::new(VecModel::from(made))
     };
     w.set_general(groups(GENERAL));
@@ -322,6 +303,55 @@ fn choices(w: &SettingsWindow, config: &config::Config) {
     w.set_layout(groups(LAYOUT));
     w.set_files(groups(FILES));
     w.set_files_status(crate::files::status().into());
+    if w.get_tab() == SEARCH_TAB {
+        found(w, &all);
+    }
+}
+
+/// The page that shows what the search box found.
+const SEARCH_TAB: i32 = 99;
+
+/// One group of setting rows, of those of `keys` there are; None if none are.
+fn group(all: &[appearance::Setting], title: &str, keys: &[&str]) -> Option<ChoiceGroup> {
+    let choices: Vec<Choice> = keys
+        .iter()
+        .filter_map(|k| all.iter().find(|s| s.key == *k))
+        .map(|s| {
+            let labels: Vec<SharedString> = s.choices.iter().map(|(l, _)| l.as_str().into()).collect();
+            let toggle = labels.len() == 2 && labels[0] == "On" && labels[1] == "Off";
+            Choice {
+                key: s.key.into(),
+                title: s.title.into(),
+                about: s.about.as_str().into(),
+                labels: ModelRc::new(VecModel::from(labels)),
+                current: s.current as i32,
+                toggle,
+            }
+        })
+        .collect();
+    (!choices.is_empty()).then(|| ChoiceGroup { title: title.into(), choices: ModelRc::new(VecModel::from(choices)) })
+}
+
+/// The settings matching the search box, every word somewhere in a setting's name, description
+/// or choices, grouped under the tab each is on.
+fn found(w: &SettingsWindow, all: &[appearance::Setting]) {
+    let words: Vec<String> = w.get_search().to_lowercase().split_whitespace().map(str::to_string).collect();
+    let matches = |key: &str| {
+        all.iter().find(|s| s.key == key).is_some_and(|s| {
+            let text =
+                format!("{} {} {}", s.title, s.about, s.choices.iter().map(|c| c.0.as_str()).collect::<Vec<_>>().join(" ")).to_lowercase();
+            words.iter().all(|w| text.contains(w.as_str()))
+        })
+    };
+    let tabs: [(&str, Groups); 4] = [("General", GENERAL), ("Appearance", LOOK), ("Layout", LAYOUT), ("Files", FILES)];
+    let made: Vec<ChoiceGroup> = tabs
+        .iter()
+        .filter_map(|(tab, groups)| {
+            let keys: Vec<&str> = groups.iter().flat_map(|(_, keys)| keys.iter().copied()).filter(|k| matches(k)).collect();
+            group(all, tab, &keys)
+        })
+        .collect();
+    w.set_found(ModelRc::new(VecModel::from(made)));
 }
 
 fn show_lists(w: &SettingsWindow) {
@@ -400,6 +430,21 @@ fn theme(w: &SettingsWindow) {
 
 fn wire(w: &SettingsWindow) {
     w.on_chosen(|key, index| choose(&key, index));
+    w.on_searched(|text| {
+        with_window(|w| {
+            if text.trim().is_empty() {
+                if w.get_tab() == SEARCH_TAB {
+                    w.set_tab(BEFORE_SEARCH.get());
+                }
+                return;
+            }
+            if w.get_tab() != SEARCH_TAB {
+                BEFORE_SEARCH.set(w.get_tab());
+                w.set_tab(SEARCH_TAB);
+            }
+            found(w, &appearance::settings(&config::load()));
+        })
+    });
     w.on_dismiss(close);
     // Its own title bar, where the window has no frame from the system.
     w.on_drag(|| {

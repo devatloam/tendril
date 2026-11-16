@@ -587,6 +587,16 @@ export component SettingsWindow inherits Window {
     default-font-size: Look.fluent ? 14px : 13px;
 
     in-out property <int> tab;
+    // The search box above the tabs, and the settings it found (tab 99 shows them).
+    in-out property <string> search;
+    in property <[ChoiceGroup]> found;
+    callback searched(string);
+    // Going to a tab leaves the search.
+    changed tab => {
+        if root.tab != 99 && root.search != "" {
+            root.search = "";
+        }
+    }
     in property <[ChoiceGroup]> general;
     in property <[ChoiceGroup]> look;
     in property <[ChoiceGroup]> layout;
@@ -692,6 +702,12 @@ export component SettingsWindow inherits Window {
                     }
                     return accept;
                 }
+                // Esc in a search clears it first; then it closes the window.
+                if e.text == Key.Escape && root.search != "" {
+                    root.search = "";
+                    root.searched("");
+                    return accept;
+                }
                 if e.text == Key.Escape || (e.modifiers.control && (e.text == "w" || e.text == "W")) {
                     root.dismiss();
                     return accept;
@@ -746,6 +762,19 @@ export component SettingsWindow inherits Window {
                             height: 34px;
                             vertical-alignment: center;
                             x: 10px;
+                        }
+
+                        // Finds a setting on any tab.
+                        Field {
+                            text <=> root.search;
+                            placeholder: "Search settings";
+                            edited(t) => {
+                                root.searched(t);
+                            }
+                        }
+
+                        Rectangle {
+                            height: 6px;
                         }
 
                         Tab {
@@ -863,7 +892,7 @@ export component SettingsWindow inherits Window {
                             spacing: Look.fluent ? 20px : 18px;
                             alignment: start;
                             Text {
-                                text: root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : root.tab == 5 ? "Snippets" : root.tab == 6 ? "Aliases" : root.tab == 7 ? "Files" : root.tab == 8 ? "Privacy & Data" : "About";
+                                text: root.tab == 99 ? "Search" : root.tab == 0 ? "General" : root.tab == 1 ? "Appearance" : root.tab == 2 ? "Layout" : root.tab == 3 ? "Search Engines" : root.tab == 4 ? "Quicklinks" : root.tab == 5 ? "Snippets" : root.tab == 6 ? "Aliases" : root.tab == 7 ? "Files" : root.tab == 8 ? "Privacy & Data" : "About";
                                 color: Theme.ink;
                                 // Windows' page titles are large.
                                 font-size: Look.fluent ? 28px : 20px;
@@ -931,6 +960,21 @@ export component SettingsWindow inherits Window {
                                             }
                                         }
                                     }
+                                }
+                            }
+
+                            // Tab 99: what the search box found, grouped by the tab it's on.
+                            if root.tab == 99 && root.found.length == 0: Text {
+                                text: "No settings match “" + root.search + "”. Search engines, quicklinks, snippets and aliases have tabs of their own.";
+                                color: Look.fluent ? Look.ink-2 : Theme.ink-2;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+
+                            if root.tab == 99: Groups {
+                                groups: root.found;
+                                chosen(key, index) => {
+                                    root.chosen(key, index);
                                 }
                             }
 

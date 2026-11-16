@@ -1285,11 +1285,14 @@ impl App {
             self.file_lines(query)
         } else {
             let mut lines = if query.trim().is_empty() { self.update_lines() } else { Vec::new() };
-            let (files, files_total) = self.files_for(query, crate::files::MAX_SHOWN).unwrap_or_default();
+            let found = self.files_for(query, crate::files::MAX_SHOWN);
+            let files_pending = found.is_none();
+            let (files, files_total) = found.unwrap_or_default();
             let sources = search::Sources {
                 catalog: &self.catalog.borrow(),
                 files: &files,
                 files_total,
+                files_pending,
                 usage: &self.usage.borrow(),
                 aliases: &config.alias,
                 engines: &config.search,

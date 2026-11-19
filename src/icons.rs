@@ -12,6 +12,7 @@ use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 /// The neutral tint, used when an app has no icon of its own and gets the generic one.
 const FALLBACK_TINT: i32 = 7;
 
@@ -127,7 +128,7 @@ impl Icons {
         let px = self.pixels(points);
         match icon {
             Icon::File(path) if !is_vector(path) => Some(format!("{}@{px}", path.display())),
-            Icon::Shell(name) => Some(format!("{name}@{px}")),
+            Icon::Shell(name) => Some(format!("{}@{px}", shared(name).unwrap_or(name))),
             _ => None,
         }
     }
@@ -207,26 +208,56 @@ impl Icons {
     }
 }
 
+/// Files whose shell icon is their own, not their type's.
+const OWN_ICON: &[&str] = &["exe", "lnk", "url", "ico", "cur", "ani", "scr", "cpl", "msc", "appref-ms"];
+
+/// What a shell icon looks the same as: every file of a type has the same one, and so does
+/// every folder (named with a separator at the end, as file rows do), so one load does for all.
+fn shared(name: &str) -> Option<&str> {
+    let path = Path::new(name);
+    if name.ends_with(['\\', '/']) {
+        return path.parent().is_some().then_some("folder");
+    }
+    let ext = path.extension()?.to_str()?;
+    if name.starts_with("shell:") || OWN_ICON.iter().any(|o| o.eq_ignore_ascii_case(ext)) {
+        return None;
+    }
+    // The dot keeps it apart from a file that's named just that.
+    Some(&name[name.len() - ext.len() - 1..])
+}
+
 fn is_vector(path: &Path) -> bool {
     path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg") || e.eq_ignore_ascii_case("svgz"))
 }
 
-/// The icon thread: loads what's asked, and hands back everything loaded each time it runs out
-/// of work, so a screenful of icons arrives as one redraw rather than thirty.
+/// The icon thread: loads what's asked, newest first, so the rows on screen don't wait behind
+/// ones typed past. What's loaded is handed back in batches of at most `SEND_EVERY`, so a
+/// screenful arrives as a redraw or two rather than thirty, and never waits on a long queue.
 fn start_worker() -> Option<mpsc::Sender<Request>> {
+    const SEND_EVERY: Duration = Duration::from_millis(50);
     let (tx, rx) = mpsc::channel::<Request>();
     std::thread::Builder::new()
         .name("icons".into())
         .stack_size(1024 * 1024)
         .spawn(move || {
+            let mut queue: Vec<Request> = Vec::new();
             while let Ok(first) = rx.recv() {
+                queue.push(first);
                 let mut batch = Vec::new();
-                let mut next = Some(first);
-                while let Some(Request { key, icon, px }) = next {
+                let mut started = Instant::now();
+                loop {
+                    queue.extend(rx.try_iter());
+                    let Some(Request { key, icon, px }) = queue.pop() else { break };
                     batch.push(Pixels { key, rgba: load_pixels(&icon, px) });
-                    next = rx.try_recv().ok();
+                    if started.elapsed() >= SEND_EVERY {
+                        let done = std::mem::take(&mut batch);
+                        let _ = slint::invoke_from_event_loop(move || crate::app::with_app(|a| a.icons_arrived(done)));
+                        started = Instant::now();
+                    }
                 }
-                let _ = slint::invoke_from_event_loop(move || crate::app::with_app(|a| a.icons_arrived(batch)));
+                if !batch.is_empty() {
+                    let _ = slint::invoke_from_event_loop(move || crate::app::with_app(|a| a.icons_arrived(batch)));
+                }
             }
         })
         .ok()?;
@@ -309,5 +340,14 @@ mod tests {
         let small = vec![255u8; 16 * 16 * 4];
         assert_eq!(fit(16, 16, small, 30).map(|(w, h, _)| (w, h)), Some((16, 16)));
         assert!(fit(4, 4, vec![0; 3], 30).is_none());
+    }
+
+    #[test]
+    fn types_share_an_icon() {
+        assert_eq!(shared(r"C:\Docs\report.pdf"), Some(".pdf"));
+        assert_eq!(shared(r"C:\Docs\Games\"), Some("folder"));
+        assert_eq!(shared(r"C:\Games\totk.exe"), None, "programs have their own");
+        assert_eq!(shared(r"C:\Docs\Makefile"), None);
+        assert_eq!(shared(r"shell:AppsFolder\com.squirrel.Discord.Discord"), None);
     }
 }

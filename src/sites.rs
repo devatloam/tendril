@@ -191,8 +191,12 @@ fn shrink(bytes: &[u8]) -> Option<(u32, Vec<u8>)> {
     if size < 16 {
         return None;
     }
-    let image =
-        if image.width() > SIZE || image.height() > SIZE { image.resize(SIZE, SIZE, image::imageops::FilterType::Lanczos3) } else { image };
+    let image = if image.width() > SIZE || image.height() > SIZE {
+        let (w, h, rgba) = crate::icons::shrink(image.width(), image.height(), image.into_rgba8().into_raw(), SIZE)?;
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(w, h, rgba)?)
+    } else {
+        image
+    };
     let mut out = std::io::Cursor::new(Vec::new());
     image.write_to(&mut out, image::ImageFormat::Png).ok()?;
     Some((size, out.into_inner()))

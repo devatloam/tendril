@@ -150,7 +150,7 @@ pub fn open(tab: i32) {
                 if w.global::<Look>().get_mica() {
                     let _ = window_vibrancy::apply_mica(&*winit, Some(w.global::<Theme>().get_dark()));
                 }
-                winit.focus_window();
+                crate::window::focus(&winit);
             }
         });
     });

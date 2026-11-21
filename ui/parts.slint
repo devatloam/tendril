@@ -80,7 +80,8 @@ export component Keycap inherits Rectangle {
 // wash, or a meaningful colour (blue for folders and updates, red for shutting down) on a wash of
 // that colour. Subtle icons keep the wash faint and only brighten the glyph when selected; bold
 // ones are stronger, and with a blue selection the selected square turns blue. Modern lights
-// them from above, which needs the GPU renderer to keep the corners round.
+// them from above, which needs the GPU renderer to keep the corners round. Windows too: a bare
+// glyph beside full-colour app icons made the list change weight from row to row.
 export component RowIcon inherits Rectangle {
     in property <image> source;
     in property <int> tint;
@@ -91,12 +92,11 @@ export component RowIcon inherits Rectangle {
     property <color> c: lit ? Theme.highlight : Theme.tint(tint);
     property <float> wash: lit ? (Theme.dark ? 0.55 : 0.5)
         : Theme.bold-icons ? (plain ? (Theme.dark ? 0.14 : 0.1) : (Theme.dark ? 0.28 : 0.2))
-        : (plain ? (Theme.dark ? 0.08 : 0.06) : (Theme.dark ? 0.16 : 0.12));
+        : (plain ? (Theme.dark ? 0.1 : 0.07) : (Theme.dark ? 0.16 : 0.12));
     width: size;
     height: size;
-    border-radius: tint == 0 ? 0 : size * 0.3;
-    // Windows' lists show glyphs on their own, without a square behind.
-    background: tint == 0 || Theme.fluent ? transparent
+    border-radius: tint == 0 ? 0 : size * (Theme.fluent ? 0.22 : 0.3);
+    background: tint == 0 ? transparent
         : Theme.modern ? @linear-gradient(180deg, c.with-alpha(wash * 1.2) 0%, c.with-alpha(wash * 0.7) 100%)
         : c.with-alpha(wash);
     animate background {
@@ -104,7 +104,7 @@ export component RowIcon inherits Rectangle {
         easing: cubic-bezier(0.2, 0, 0, 1);
     }
     Image {
-        width: tint == 0 ? parent.width : parent.width * (Theme.fluent ? 0.8 : 0.68);
+        width: tint == 0 ? parent.width : parent.width * 0.72;
         height: self.width;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
@@ -129,7 +129,8 @@ export component SectionRow inherits Rectangle {
 export component ItemRow inherits Rectangle {
     in property <Row> data;
     in property <bool> selected;
-    in property <string> mod-key;
+    // Ctrl is held: show the Ctrl+number.
+    in property <bool> numbers;
     // Compact windows have no bar along the bottom, so the selected row says what Enter does.
     in property <string> hint;
     HorizontalLayout {
@@ -157,9 +158,11 @@ export component ItemRow inherits Rectangle {
                 horizontal-stretch: 0;
             }
 
+            // A size under the title, so the two read as one thing and its detail.
             Text {
                 text: data.subtitle;
                 color: Theme.ink-3;
+                font-size: 13px;
                 vertical-alignment: center;
                 overflow: elide;
                 horizontal-stretch: 1;
@@ -217,27 +220,15 @@ export component ItemRow inherits Rectangle {
                 }
             }
         }
-        if data.kind != 5 && data.quick != "" && !(selected && hint != ""): HorizontalLayout {
-            spacing: 3px;
-            alignment: center;
-            VerticalLayout {
-                alignment: center;
-                Keycap {
-                    label: mod-key;
-                }
-            }
-
-            VerticalLayout {
-                alignment: center;
-                Keycap {
-                    label: data.quick;
-                }
-            }
-        }
-        if data.kind != 5 && data.quick == "" && !(selected && hint != ""): Text {
-            text: data.accessory;
+        // Its Ctrl+number only while Ctrl is held, in place of what it is: a pair of keycaps on
+        // every row made the right edge the loudest thing in the list.
+        if data.kind != 5 && !(selected && hint != ""): Text {
+            text: numbers && data.quick != "" ? data.quick : data.accessory;
             color: selected ? Theme.ink-2 : Theme.ink-3;
-            font-size: 13px;
+            font-size: 12px;
+            // One width for both, so the title and subtitle don't reflow when Ctrl is held.
+            min-width: data.quick != "" ? 72px : 0px;
+            horizontal-alignment: right;
             vertical-alignment: center;
         }
     }
@@ -247,10 +238,21 @@ export component ItemRow inherits Rectangle {
 export component TileCell inherits Rectangle {
     in property <Row> data;
     in property <bool> selected;
+    in property <bool> numbers;
+    if numbers && data.quick != "": Text {
+        x: parent.width - self.width - 6px;
+        y: 4px;
+        text: data.quick;
+        color: selected ? Theme.ink-2 : Theme.ink-3;
+        font-size: 12px;
+    }
+    // A little low, leaving the top corner to the Ctrl+number and the bottom to the accent.
     VerticalLayout {
         alignment: center;
         spacing: 8px;
         padding: 6px;
+        padding-top: 10px;
+        padding-bottom: 4px;
         HorizontalLayout {
             alignment: center;
             RowIcon {
@@ -378,21 +380,30 @@ export component DetailPane inherits Rectangle {
 export component CalcRow inherits Rectangle {
     in property <Row> data;
     in property <bool> selected;
+    in property <bool> numbers;
+    // Selected, the list's own highlight slides under it; the edge stays, so it doesn't change shape.
     border-radius: Theme.fluent ? 6px : 10px;
     border-width: 1px;
-    border-color: selected ? transparent : Theme.line;
+    border-color: Theme.line;
+    if numbers && data.quick != "": Text {
+        x: parent.width - self.width - 12px;
+        y: 10px;
+        text: data.quick;
+        color: selected ? Theme.ink-2 : Theme.ink-3;
+        font-size: 12px;
+    }
     HorizontalLayout {
-        padding: 12px;
+        padding: 10px;
         spacing: 8px;
+        // The answer leads; what you typed steps back.
         VerticalLayout {
             horizontal-stretch: 1;
             alignment: center;
             spacing: 6px;
             Text {
                 text: data.title;
-                color: Theme.ink;
+                color: Theme.ink-2;
                 font-size: 24px;
-                font-weight: 500;
                 horizontal-alignment: center;
                 overflow: elide;
             }
@@ -400,7 +411,7 @@ export component CalcRow inherits Rectangle {
             Text {
                 text: "Expression";
                 color: Theme.ink-3;
-                font-size: 12px;
+                font-size: 11px;
                 horizontal-alignment: center;
             }
         }
@@ -431,7 +442,7 @@ export component CalcRow inherits Rectangle {
             Text {
                 text: data.accessory;
                 color: Theme.ink-3;
-                font-size: 12px;
+                font-size: 11px;
                 horizontal-alignment: center;
             }
         }

@@ -120,6 +120,25 @@ pub fn needs_restart(a: &crate::config::Appearance) -> bool {
     wants_gpu(a) != is_gpu()
 }
 
+/// The scale the window opens at: the screen under the pointer's, where put() places it. Known on
+/// Windows even before the window first exists, so icons can be made for it ahead; elsewhere
+/// only once there's a window, None before.
+pub fn scale_to_come(ui: &Launcher) -> Option<f32> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromPoint};
+        use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+        let _ = ui;
+        let (x, y) = pointer()?;
+        let screen = MonitorFromPoint(windows::Win32::Foundation::POINT { x, y }, MONITOR_DEFAULTTONEAREST);
+        let mut dpi = [0u32; 2];
+        GetDpiForMonitor(screen, MDT_EFFECTIVE_DPI, &mut dpi[0], &mut dpi[1]).ok()?;
+        (dpi[0] > 0).then(|| dpi[0] as f32 / 96.0)
+    }
+    #[cfg(not(windows))]
+    ui.window().with_winit_window(|w| monitor_under_pointer(w).or_else(|| w.current_monitor()).map(|m| m.scale_factor() as f32)).flatten()
+}
+
 /// A blur this soon after opening is the window manager settling, not you clicking away.
 const SETTLE: Duration = Duration::from_millis(300);
 
@@ -159,11 +178,19 @@ pub fn attributes(attrs: WindowAttributes) -> WindowAttributes {
 /// Hides the window when it loses focus, if config.toml says to.
 pub fn watch(ui: &Launcher) {
     ui.window().on_winit_window_event(|_, event| {
-        if let winit::event::WindowEvent::Focused(focused) = event {
-            eprintln!("tendril: window focused: {focused}");
-            if !focused {
-                slint::Timer::single_shot(Duration::ZERO, clicked_away);
+        match event {
+            winit::event::WindowEvent::Focused(focused) => {
+                eprintln!("tendril: window focused: {focused}");
+                if !*focused {
+                    slint::Timer::single_shot(Duration::ZERO, clicked_away);
+                }
             }
+            // Opened on a screen with another scale: icons made for that one.
+            winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                let scale = *scale_factor as f32;
+                slint::Timer::single_shot(Duration::ZERO, move || with_app(|app| app.rescale(scale)));
+            }
+            _ => {}
         }
         EventResult::Propagate
     });
@@ -186,6 +213,8 @@ fn clicked_away() {
     with_app(|app| {
         let settled = app.shown_at.get().is_some_and(|t| t.elapsed() > SETTLE);
         let Some(ui) = app.ui.upgrade() else { return };
+        // Ctrl let go of in another window never reaches this one.
+        ui.set_ctrl_held(false);
         let (setting, visible) = (app.config.borrow().hide_on_blur, ui.window().is_visible());
         if setting && settled && visible {
             hide(&ui);
@@ -214,8 +243,8 @@ mod foreground {
     unsafe extern "system" fn changed(_: HWINEVENTHOOK, _: u32, window: HWND, _: i32, _: i32, _: u32, _: u32) {
         let mut pid = 0u32;
         unsafe { GetWindowThreadProcessId(window, Some(&mut pid)) };
+        // Not logged: this fires on every window switch all day, open or not, and filled the log.
         if pid != 0 && pid != std::process::id() {
-            eprintln!("tendril: another app came to the front");
             slint::Timer::single_shot(std::time::Duration::ZERO, super::clicked_away);
         }
     }
@@ -231,7 +260,11 @@ pub fn show(ui: &Launcher) {
             app.opening();
             app.shown_at.set(Some(Instant::now()));
         });
-        if let Some((x, y)) = PLACE.get() {
+        // Where the window is kept (Windows), it's moved to the pointer's screen before it shows,
+        // rather than showing where it was last and jumping there.
+        let at = ui.window().with_winit_window(spot).flatten().or(PLACE.get());
+        if let Some((x, y)) = at {
+            PLACE.set(at);
             ui.window().set_position(slint::PhysicalPosition::new(x, y));
         }
         if let Err(e) = ui.show() {
@@ -261,6 +294,8 @@ fn place(ui: &Launcher) {
             let mut style = String::new();
             with_app(|app| style = app.config.borrow().appearance.blur_style.clone());
             put(&w, ui.get_see_through().then_some(style.as_str()), ui.global::<crate::Theme>().get_dark());
+            // The first time, the scale is only known now the window exists.
+            with_app(|app| app.rescale(w.scale_factor() as f32));
         }
     });
 }
@@ -299,6 +334,17 @@ fn pointer() -> Option<(i32, i32)> {
     None
 }
 
+/// Centred across the pointer's screen and a third of the way down it.
+fn spot(w: &winit::window::Window) -> Option<(i32, i32)> {
+    let monitor = monitor_under_pointer(w).or_else(|| w.primary_monitor()).or_else(|| w.current_monitor())?;
+    let (at, screen, size) = (monitor.position(), monitor.size(), w.outer_size());
+    // Its size once there: a screen with another scale resizes it on arrival, and centring it at
+    // the old size meant moving it again after it showed.
+    let grow = monitor.scale_factor() / w.scale_factor();
+    let (width, height) = ((size.width as f64 * grow).round() as i32, (size.height as f64 * grow).round() as i32);
+    Some((at.x + (screen.width as i32 - width) / 2, at.y + (screen.height as i32 - height) / 3))
+}
+
 /// `blur` is the blur style when the window is see-through.
 fn put(w: &winit::window::Window, blur: Option<&str>, dark: bool) {
     if let Some(style) = blur {
@@ -309,22 +355,16 @@ fn put(w: &winit::window::Window, blur: Option<&str>, dark: bool) {
         }
     }
     {
-        if let Some(monitor) = monitor_under_pointer(w).or_else(|| w.primary_monitor()).or_else(|| w.current_monitor()) {
-            let (at, screen, size) = (monitor.position(), monitor.size(), w.outer_size());
-            let x = at.x + (screen.width as i32 - size.width as i32) / 2;
-            let y = at.y + (screen.height as i32 - size.height as i32) / 3;
-            if PLACE.get() != Some((x, y)) {
-                w.set_outer_position(PhysicalPosition::new(x, y));
-                PLACE.set(Some((x, y)));
-            }
+        if let Some((x, y)) = spot(w)
+            && PLACE.get() != Some((x, y))
+        {
+            w.set_outer_position(PhysicalPosition::new(x, y));
+            PLACE.set(Some((x, y)));
         }
-        w.focus_window();
         #[cfg(windows)]
         {
             use windows::Win32::Foundation::HWND;
-            use windows::Win32::UI::WindowsAndMessaging::{
-                GWL_STYLE, GetWindowLongPtrW, SetForegroundWindow, SetWindowLongPtrW, WS_SYSMENU,
-            };
+            use windows::Win32::UI::WindowsAndMessaging::{GWL_STYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_SYSMENU};
             use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
             if let Ok(handle) = w.window_handle()
                 && let RawWindowHandle::Win32(h) = handle.as_raw()
@@ -336,11 +376,60 @@ fn put(w: &winit::window::Window, blur: Option<&str>, dark: bool) {
                     // and that's the shortcut people most often want.
                     let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
                     SetWindowLongPtrW(hwnd, GWL_STYLE, style & !(WS_SYSMENU.0 as isize));
-                    // The hotkey (or the Tendril that was started again) gave us the right to come
-                    // to the front; winit's focus doesn't always use it.
-                    let _ = SetForegroundWindow(hwnd);
                 }
             }
+        }
+        focus(w);
+    }
+}
+
+/// Brings a window to the front with the keyboard.
+pub fn focus(w: &winit::window::Window) {
+    #[cfg(not(windows))]
+    w.focus_window();
+    #[cfg(windows)]
+    {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = w.window_handle()
+            && let RawWindowHandle::Win32(h) = handle.as_raw()
+        {
+            come_forward(windows::Win32::Foundation::HWND(h.hwnd.get() as *mut _));
+        }
+    }
+}
+
+/// Comes forward without faking keys. winit's focus_window fakes an Alt press to get past Windows'
+/// focus lock, and Windows reads that Alt as the right one, so Discord's mute on Right Alt toggled
+/// every time Tendril opened. The hotkey, a tray click or a second Tendril (ipc.rs) already give
+/// the right to come forward; when Windows still refuses, this borrows the input of the window in
+/// front for a moment.
+#[cfg(windows)]
+fn come_forward(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsHungAppWindow, IsWindowVisible, SetForegroundWindow,
+    };
+    unsafe {
+        // Closed again before this ran (the shortcut pressed twice quickly).
+        if !IsWindowVisible(hwnd).as_bool() {
+            return;
+        }
+        let front = GetForegroundWindow();
+        if front == hwnd || SetForegroundWindow(hwnd).as_bool() {
+            return;
+        }
+        let (theirs, ours) = (GetWindowThreadProcessId(front, None), GetCurrentThreadId());
+        // Sharing input with an app that has stopped responding could stall Tendril too.
+        let came =
+            theirs != 0 && theirs != ours && !IsHungAppWindow(front).as_bool() && AttachThreadInput(ours, theirs, true).as_bool() && {
+                let _ = BringWindowToTop(hwnd);
+                let came = SetForegroundWindow(hwnd).as_bool();
+                let _ = AttachThreadInput(ours, theirs, false);
+                came
+            };
+        // An app run as administrator in front can't be taken over; keys keep going to it.
+        if !came {
+            eprintln!("tendril: Windows kept another window in front, so typing still goes there");
         }
     }
 }

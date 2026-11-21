@@ -475,7 +475,11 @@ impl App {
             self.copied(text);
         }
         let refused = self.hotkeys.borrow().as_ref().and_then(|h| h.refused());
-        self.icons.borrow_mut().set_scale(ui.window().scale_factor());
+        // The window's own scale reads as 1 before it first exists (that made icons for a 150%
+        // screen at 100%, stretched), and is its last screen's until it moves to the pointer's.
+        if let Some(scale) = window::scale_to_come(&ui) {
+            self.set_icon_scale(scale);
+        }
         self.pointer.set(None);
         let stale = self.hidden_at.get().is_none_or(|t| t.elapsed() > KEEP_VIEW);
         if stale {
@@ -650,6 +654,7 @@ impl App {
         }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_recording(false);
+            ui.set_ctrl_held(false);
             self.close_overlays(&ui);
             ui.set_toast(SharedString::new());
             ui.set_query(SharedString::new());
@@ -722,6 +727,7 @@ impl App {
             self.decorate(item);
         }
         *self.catalog.borrow_mut() = catalog;
+        self.warm_icons();
         let config = self.config.borrow();
         if config.site_icons {
             let urls: Vec<String> = config.quicklink.iter().map(|l| l.url.clone()).collect();
@@ -737,10 +743,60 @@ impl App {
         }
     }
 
+    /// The window's scale, now that it's known or has changed: the rows get icons made for it.
+    pub fn rescale(&self, scale: f32) {
+        if self.set_icon_scale(scale)
+            && let Some(ui) = self.ui.upgrade()
+            && ui.window().is_visible()
+        {
+            let keep = self.selected_item().map(|i| i.id);
+            self.refresh_keeping(&ui.get_query(), keep.as_deref());
+        }
+    }
+
+    /// Icons are made for this scale from now on. Returns whether their pixels change.
+    fn set_icon_scale(&self, scale: f32) -> bool {
+        let first = !self.icons.borrow().has_scale();
+        let changed = self.icons.borrow_mut().set_scale(scale);
+        if changed || first {
+            self.warm_icons();
+        }
+        changed
+    }
+
+    /// Before the first open (on Windows, where the scale is known by then): the list as it'll
+    /// first show, and every icon it can list made in the background, so typing never shows a
+    /// blank square waiting for one. A few hundred icons come to a few megabytes at most.
+    pub fn warm_up(&self) {
+        if let Some(ui) = self.ui.upgrade()
+            && let Some(scale) = window::scale_to_come(&ui)
+        {
+            self.set_icon_scale(scale);
+            self.refresh("");
+        }
+    }
+
+    /// Every app's and quicklink's row icon, the browser's for web searches, and the favourites'
+    /// tiles.
+    fn warm_icons(&self) {
+        let mut icons = self.icons.borrow_mut();
+        if icons.has_scale() {
+            let (catalog, browser) = (self.catalog.borrow(), self.browser.borrow());
+            icons.warm(catalog.iter().map(|i| &i.icon).chain(browser.iter()), crate::icons::ROW);
+            if self.config.borrow().appearance.grid() {
+                icons.warm(search::favourites(&catalog, &self.usage.borrow()).into_iter().map(|i| &i.icon), crate::icons::TILE);
+            }
+        }
+    }
+
     /// Icons the icon thread finished: the rows showing them get them, without rebuilding the list.
     pub fn icons_arrived(&self, batch: Vec<crate::icons::Pixels>) {
         let Some(ui) = self.ui.upgrade() else { return };
         let arrived = self.icons.borrow_mut().arrived(batch);
+        // Closed, the rows are rebuilt on opening anyway.
+        if !ui.window().is_visible() {
+            return;
+        }
         let items = self.items.borrow();
         for (i, item) in items.iter().enumerate() {
             let (Some(item), Some(mut row)) = (item, self.rows.row_data(i)) else { continue };
@@ -1418,7 +1474,7 @@ impl App {
                 }
                 Line::Item(item) => {
                     let (kind, height) = match (&item.run, item.kind) {
-                        (_, Kind::Calculator) => (2, 100.0),
+                        (_, Kind::Calculator) => (2, 88.0),
                         (Run::Setting(_), _) => (5, 44.0),
                         (Run::Shortcut, _) => (6, 64.0),
                         _ if compact => (1, 34.0),
@@ -1431,13 +1487,14 @@ impl App {
             }
         }
         drop(icons);
-        // Ctrl 1–9 for the first nine things you can open.
+        // Ctrl 1–9 for the first nine things you can open, shown while Ctrl is held.
         let mut quick = Vec::new();
         if a.quick_keys {
+            let held = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl+" };
             for (i, item) in items.iter().enumerate() {
                 if item.is_some() && quick.len() < 9 {
                     quick.push(i);
-                    rows[i].quick = (quick.len()).to_string().into();
+                    rows[i].quick = format!("{held}{}", quick.len()).into();
                 }
             }
         }
@@ -1686,9 +1743,6 @@ impl App {
             }
         }
         ui.set_primary_label(item.as_ref().map_or("", |i| i.verb()).into());
-        // Ctrl Enter's action, said beside Enter's.
-        let second = item.as_ref().and_then(|i| actions_for(i, &self.usage.borrow()).get(1).map(|a| describe(a, i, true).0));
-        ui.set_secondary_label(second.unwrap_or_default().into());
         if self.config.borrow().appearance.details {
             ui.set_detail(item.map(|i| self.detail(&i)).unwrap_or_default());
         }
@@ -2572,7 +2626,7 @@ fn reveal_label() -> &'static str {
 fn actions_for(item: &Item, usage: &Usage) -> Vec<Act> {
     let mut acts = vec![Act::Primary];
     match &item.run {
-        Run::Copy(_) => acts.push(Act::Copy("sum", format!("{} = {}", item.title, item.subtitle))),
+        Run::Copy(_) => acts.push(Act::Copy("equation", format!("{} = {}", item.title, item.subtitle))),
         Run::Url(url) => acts.push(Act::Copy("link", url.clone())),
         Run::InstallPreview => acts.push(Act::NoPreviews),
         Run::Clip(id) => {

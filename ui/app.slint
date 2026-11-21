@@ -9,16 +9,18 @@ import { Tumble, Glow, Sweep, Spectrum } from "motion.slint";
 export { Theme, Row, Fact, Detail, ActionRow }
 export { SettingsWindow, Choice, ChoiceGroup, Entry, Look, Stored } from "settings.slint";
 
-// The highlight under the selected row or tile: lit from above like Blight's `gloss`, and drawn
-// in the ink colour at low strength so it reads the same over a solid panel, glass or the glow.
+// The highlight under the selected row, tile or calculator card: lit from above like Blight's
+// `gloss`, and drawn in the ink colour at low strength so it reads the same over a solid panel,
+// glass or the glow. One shape for all three, so a selection looks like a selection wherever it is.
 component Highlight inherits Rectangle {
     // Flat: a plain wash, as Raycast does it (the CPU renderer only rounds flat fills).
     // Modern: lit from above, with a faint sheen along the top edge.
-    // Windows: a faint wash with a pill of the accent at the left, as Windows' own lists.
+    // Windows: a faint wash with a pill of the accent, at the left of a row and under a tile, as
+    // Windows' own lists and tabs.
     in property <bool> is-row;
     property <color> c: Theme.selection;
     property <float> a: Theme.selection-alpha;
-    border-radius: Theme.fluent ? (is-row ? 4px : 6px) : 10px;
+    border-radius: Theme.fluent ? 6px : 10px;
     background: Theme.modern ? @linear-gradient(180deg, c.with-alpha(a * 1.3) 0%, c.with-alpha(a * 0.75) 100%) : c.with-alpha(a);
     if Theme.modern: Rectangle {
         x: 10px;
@@ -32,6 +34,14 @@ component Highlight inherits Rectangle {
         y: (parent.height - self.height) / 2;
         width: 3px;
         height: min(16px, parent.height - 12px);
+        border-radius: 1.5px;
+        background: Theme.highlight;
+    }
+    if Theme.fluent && !root.is-row: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 5px;
+        width: 16px;
+        height: 3px;
         border-radius: 1.5px;
         background: Theme.highlight;
     }
@@ -78,7 +88,6 @@ export component Launcher inherits Window {
     in property <int> context-tint;
     in property <string> context-title: "Tendril";
     in property <string> primary-label;
-    in property <string> secondary-label;
     in property <string> mod-key: "Ctrl";
     in property <string> toast;
     in property <bool> toast-failed;
@@ -139,6 +148,23 @@ export component Launcher inherits Window {
     callback complete() -> bool;
     // Ctrl and a digit: true if it opened something.
     callback quick(string) -> bool;
+    // Ctrl is held down on its own.
+    in-out property <bool> ctrl-held;
+    // Rows, tiles and the calculator show their Ctrl+number once Ctrl has been held on its own for
+    // a moment, so Ctrl K and the like don't flash them.
+    property <bool> numbers;
+    Timer {
+        interval: 300ms;
+        running: root.ctrl-held && !root.numbers;
+        triggered => {
+            root.numbers = true;
+        }
+    }
+    changed ctrl-held => {
+        if !root.ctrl-held {
+            root.numbers = false;
+        }
+    }
     callback toggle-actions();
     callback action-query-edited(string);
     callback action-move(int);
@@ -195,8 +221,9 @@ export component Launcher inherits Window {
         clip: true;
         background: see-through ? Theme.panel.with-alpha(root.panel-opacity) : Theme.panel;
 
-        // A sheen, brighter at the top, as on Blight's glass.
-        Rectangle {
+        // A sheen, brighter at the top, as on Blight's glass. Not in Windows' look, whose
+        // surfaces are flat: there it read as a milky haze over the search field.
+        if !Theme.fluent: Rectangle {
             background: @linear-gradient(180deg, #ffffff.with-alpha(Theme.dark ? 0.055 : 0.3) 0%, #ffffff.with-alpha(0) 100%);
             height: 160px;
             y: 0;
@@ -209,8 +236,16 @@ export component Launcher inherits Window {
         }
 
         FocusScope {
+            capture-key-released(e) => {
+                if e.text == Key.Control || e.text == Key.ControlR {
+                    root.ctrl-held = false;
+                }
+                return reject;
+            }
             // Seen before the text field, so the arrows and Enter steer the list while you type.
             capture-key-pressed(e) => {
+                // Any other key with it is a shortcut, not a look at the numbers.
+                root.ctrl-held = !root.recording && (e.text == Key.Control || e.text == Key.ControlR);
                 if root.recording && !root.confirm-open && root.record(e.text, e.modifiers.control, e.modifiers.alt, e.modifiers.shift, e.modifiers.meta) {
                     return accept;
                 }
@@ -397,19 +432,27 @@ export component Launcher inherits Window {
                         }
                     }
 
+                    // The field's own line, under the words rather than across the window, and
+                    // softer than it was: it was the brightest thing on screen.
                     if root.gradient-divider: Spectrum {
+                        x: 20px;
                         y: parent.height - 1px;
+                        width: parent.width - 40px;
                         height: 1px;
-                        strength: 0.8;
+                        // Dark ink on a light panel reads stronger at the same strength.
+                        strength: Theme.dark ? 0.5 : 0.35;
                     }
                     if !root.gradient-divider: Rectangle {
+                        x: 20px;
                         y: parent.height - 1px;
+                        width: parent.width - 40px;
                         height: 1px;
                         background: Theme.line;
                     }
                     if root.busy: Sweep {
+                        x: 20px;
                         y: parent.height - 2px;
-                        width: parent.width;
+                        width: parent.width - 40px;
                     }
                 }
 
@@ -425,14 +468,15 @@ export component Launcher inherits Window {
                             y: 0;
                             width: parent.width - 16px;
                             content-height: root.rows-height + 8px;
-                            // The highlight moves between rows rather than blinking from one to the next.
-                            if root.selected >= 0 && (root.rows[root.selected].kind == 1 || root.rows[root.selected].kind == 4 || root.rows[root.selected].kind == 5 || root.rows[root.selected].kind == 6): Highlight {
+                            // The highlight moves between rows rather than blinking from one to the next,
+                            // and takes the next one's shape on the way (a tile to a row, the card to a row).
+                            if root.selected >= 0 && (root.rows[root.selected].kind == 1 || root.rows[root.selected].kind == 2 || root.rows[root.selected].kind == 4 || root.rows[root.selected].kind == 5 || root.rows[root.selected].kind == 6): Highlight {
                                 x: root.rows[root.selected].x;
                                 y: root.rows[root.selected].y;
                                 width: root.rows[root.selected].width > 0 ? root.rows[root.selected].width : list.width;
                                 height: root.rows[root.selected].height;
                                 is-row: root.rows[root.selected].kind != 4;
-                                animate x, y {
+                                animate x, y, width, height {
                                     duration: root.glide ? 110ms : 0ms;
                                     easing: cubic-bezier(0.2, 0, 0, 1);
                                 }
@@ -448,17 +492,18 @@ export component Launcher inherits Window {
                                 if row.kind == 1 || row.kind == 5: ItemRow {
                                     data: row;
                                     selected: i == root.selected;
-                                    mod-key: root.mod-key;
+                                    numbers: root.numbers;
                                     hint: compact && row.kind == 1 ? root.primary-label : "";
                                 }
                                 if row.kind == 4: TileCell {
                                     data: row;
                                     selected: i == root.selected;
+                                    numbers: root.numbers;
                                 }
                                 if row.kind == 2: CalcRow {
                                     data: row;
                                     selected: i == root.selected;
-                                    background: i == root.selected ? Theme.selection.with-alpha(Theme.selection-alpha) : transparent;
+                                    numbers: root.numbers;
                                 }
                                 // Nothing matched: the shapes hop once on a still glow.
                                 if row.kind == 3: Rectangle {
@@ -732,14 +777,16 @@ export component Launcher inherits Window {
                             }
                         }
                     }
+                    // On the list's edges: the icon over the rows' icons, the words over their
+                    // titles, the keys ending where the rows' labels do.
                     if !root.onboarding: HorizontalLayout {
-                        padding-left: 14px;
-                        padding-right: 10px;
+                        padding-left: 20px;
+                        padding-right: 16px;
                         spacing: 8px;
                         // What sits left of the words: the shapes hopping when something worked,
                         // tossing while Tendril works, otherwise an icon.
                         Rectangle {
-                            width: 26px;
+                            width: 24px;
                             if root.toast != "" && !root.toast-failed: Tumble {
                                 mode: 2;
                                 size: 6px;
@@ -762,7 +809,7 @@ export component Launcher inherits Window {
                         Text {
                             text: root.toast != "" ? root.toast : root.busy ? root.busy-label : root.context-title;
                             color: root.toast != "" ? Theme.ink : Theme.ink-2;
-                            font-size: 13px;
+                            font-size: 12px;
                             vertical-alignment: center;
                             overflow: elide;
                             horizontal-stretch: 1;
@@ -787,7 +834,7 @@ export component Launcher inherits Window {
                                     Text {
                                         text: root.primary-label;
                                         color: Theme.ink;
-                                        font-size: 13px;
+                                        font-size: 12px;
                                         font-weight: 500;
                                         vertical-alignment: center;
                                     }
@@ -802,47 +849,9 @@ export component Launcher inherits Window {
                             }
                         }
 
-                        // What Ctrl Enter does with what's selected, when it does something.
-                        if root.secondary-label != "": VerticalLayout {
-                            alignment: center;
-                            Rectangle {
-                                height: 28px;
-                                border-radius: 6px;
-                                background: secondary-touch.has-hover ? Theme.ink.with-alpha(0.08) : transparent;
-                                secondary-touch := TouchArea {
-                                    clicked => {
-                                        root.activate(root.selected, true);
-                                    }
-                                }
-
-                                HorizontalLayout {
-                                    padding-left: 8px;
-                                    padding-right: 6px;
-                                    spacing: 8px;
-                                    Text {
-                                        text: root.secondary-label;
-                                        color: Theme.ink-2;
-                                        font-size: 13px;
-                                        font-weight: 500;
-                                        vertical-alignment: center;
-                                    }
-
-                                    HorizontalLayout {
-                                        spacing: 3px;
-                                        padding-top: 4px;
-                                        padding-bottom: 4px;
-                                        Keycap {
-                                            label: root.mod-key;
-                                        }
-
-                                        Keycap {
-                                            label: "↵";
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
+                        // Only Enter's action and the actions panel, as Raycast: Ctrl Enter's is
+                        // listed there with its keys, and a third label here changed width with
+                        // every row you moved to.
                         VerticalLayout {
                             alignment: center;
                             Rectangle {
@@ -871,7 +880,7 @@ export component Launcher inherits Window {
                                     Text {
                                         text: "Actions";
                                         color: Theme.ink-2;
-                                        font-size: 13px;
+                                        font-size: 12px;
                                         font-weight: 500;
                                         vertical-alignment: center;
                                     }

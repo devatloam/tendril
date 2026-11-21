@@ -10,7 +10,7 @@ use nucleo_matcher::{Matcher, Utf32Str};
 pub enum Line {
     Section(String),
     Item(Item),
-    /// Nothing matched: said over the shapes, above the web searches.
+    /// Nothing matched and there's nowhere else to search it: said over the shapes.
     Empty(String),
     /// What you use most, shown before you type, as tiles or a list.
     Favourites(Vec<Item>),
@@ -90,11 +90,10 @@ pub fn lines(query: &str, s: &Sources, matcher: &mut Matcher) -> Vec<Line> {
     }
 
     let matches = ranked(query, catalog, usage, aliases, matcher);
+    let nothing = matches.is_empty() && lines.is_empty() && files.is_empty() && !files_pending;
     if !matches.is_empty() {
         lines.push(Line::Section("Results".into()));
         lines.extend(matches.into_iter().map(|i| Line::Item(i.clone())));
-    } else if lines.is_empty() && files.is_empty() && !files_pending {
-        lines.push(Line::Empty(format!("Nothing matches “{}”", shorten(query, 40))));
     }
     if !files.is_empty() {
         lines.push(Line::Section("Files".into()));
@@ -115,20 +114,29 @@ pub fn lines(query: &str, s: &Sources, matcher: &mut Matcher) -> Vec<Line> {
         }
     }
 
-    lines.push(Line::Section(format!("Use “{}” with…", shorten(query, 40))));
+    let mut elsewhere = Vec::new();
     if let Some(url) = as_url(query) {
-        lines.push(Line::Item(fallback("open-url", "Open URL", query, "link", 7, url)));
+        elsewhere.push(Line::Item(fallback("open-url", "Open URL", query, "link", 7, url)));
     }
     for engine in engines {
         let url = engine.url.replace("{query}", &encode(query));
         let title = format!("Search {}", engine.name);
-        lines.push(Line::Item(fallback(&engine.name, &title, query, "globe", 7, url)));
+        elsewhere.push(Line::Item(fallback(&engine.name, &title, query, "globe", 7, url)));
     }
     for link in links.iter().filter(|l| l.takes_text() && !keyword_used) {
         let target = crate::catalog::link_target(&fill(&link.url, query));
         let mut item = fallback(&link.name, &format!("Open {}", link.name), query, "link", 7, String::new());
         item.run = target;
-        lines.push(Line::Item(item));
+        elsewhere.push(Line::Item(item));
+    }
+    // Nothing matched but it can still be searched for: the searches move up to where results
+    // were, as Raycast does, rather than sitting under a big "nothing matches" that came and went
+    // as you typed.
+    if nothing && elsewhere.is_empty() {
+        lines.push(Line::Empty(format!("Nothing matches “{}”", shorten(query, 40))));
+    } else if !elsewhere.is_empty() {
+        lines.push(Line::Section(format!("Use “{}” with…", shorten(query, 40))));
+        lines.extend(elsewhere);
     }
     lines
 }
@@ -138,10 +146,8 @@ fn fill(url: &str, text: &str) -> String {
     url.replace("{query}", &encode(text)).replace("{raw}", text)
 }
 
-/// The list before you type: what you use most, then every command.
-fn root(catalog: &[Item], usage: &Usage) -> Vec<Line> {
-    let mut lines = Vec::new();
-    // What you pinned, in your order, then what you use most.
+/// What you pinned, in your order, then what you use most.
+pub fn favourites<'a>(catalog: &'a [Item], usage: &Usage) -> Vec<&'a Item> {
     let pinned = usage.pinned().iter().filter_map(|id| catalog.iter().find(|i| &i.id == id));
     let used = usage.top(SUGGESTIONS).into_iter().filter_map(|id| catalog.iter().find(|i| i.id == id));
     let mut top: Vec<&Item> = Vec::new();
@@ -150,6 +156,13 @@ fn root(catalog: &[Item], usage: &Usage) -> Vec<Line> {
             top.push(item);
         }
     }
+    top
+}
+
+/// The list before you type: what you use most, then every command.
+fn root(catalog: &[Item], usage: &Usage) -> Vec<Line> {
+    let mut lines = Vec::new();
+    let top = favourites(catalog, usage);
     if !top.is_empty() {
         lines.push(Line::Favourites(top.iter().map(|i| (*i).clone()).collect()));
     }
@@ -336,6 +349,12 @@ mod tests {
         assert!(matches!(lines.first(), Some(Line::Empty(m)) if m.contains("zzqx")));
         let lines = find("2+2", &catalog, &Usage::default(), &[], &[]);
         assert!(!lines.iter().any(|l| matches!(l, Line::Empty(_))), "a sum isn't 'nothing found'");
+        // With somewhere to search it instead, the searches come first.
+        let links = vec![crate::config::Quicklink { name: "GitHub".into(), keyword: "gh".into(), url: "https://github.com/{raw}".into() }];
+        let lines = find("zzqx", &catalog, &Usage::default(), &[], &links);
+        assert!(matches!(&lines[0], Line::Section(h) if h.starts_with("Use") && h.contains("zzqx")));
+        assert!(matches!(&lines[1], Line::Item(i) if i.title == "Open GitHub"));
+        assert!(!lines.iter().any(|l| matches!(l, Line::Empty(_))));
     }
 
     #[test]

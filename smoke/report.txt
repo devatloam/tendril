@@ -1,0 +1,18 @@
+Tendril smoke test, 2026-11-21T19:16:30.9880689+00:00
+install: exe there: True; Start menu entry: True; starts at sign-in: '"C:\Users\runneradmin\AppData\Local\Programs\Tendril\tendril.exe" --hidden'; in Settings > Apps: True
+start: window visible after 141 ms (-1 = never)
+start: in front: 'Tendril'
+default shortcut: Alt+Space closed it after 4 ms (-1 = didn't)
+default shortcut: Alt+Space opened it after 2 ms (-1 = didn't); in front: 'Tendril'
+walkthrough: recorded shortcut, config says: hotkey = "Ctrl+Shift+KeyK"
+walkthrough: done, visible: True, in front: 'Tendril'
+typing: sent 'visual studio code' in 731 ms; UI Automation read it all 689 ms after the last key (slow to read: compare 05a-right-after-typing.png)
+click away: Notepad in front after 54 ms; Tendril visible: False
+shortcut: visible after 2 ms; in front: 'Tendril'; field: ''
+escape: visible: False
+start again: visible after 16 ms; tendril processes: 1; in front: 'Tendril'
+settings: window visible after -1 ms; in front: 'Tendril Settings'
+settings: after Esc, still visible: False
+memory open: 18.7 MB private, 67.5 MB working set
+memory closed: 18.7 MB private, 67.5 MB working set
+done

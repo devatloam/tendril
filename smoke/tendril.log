@@ -1,0 +1,29 @@
+tendril 0.4.0 started
+tendril: took alt+Space (Ok(()))
+tendril: notification area icon added
+tendril: window focused: true
+tendril: shortcut Pressed
+tendril: window focused: false
+tendril: shortcut Released
+tendril: shortcut Pressed
+tendril: window focused: true
+tendril: shortcut Released
+tendril: let go of alt+Space (Ok(()))
+tendril: took shift+control+KeyK (Ok(()))
+tendril: let go of shift+control+KeyK (Ok(()))
+tendril: took shift+control+KeyK (Ok(()))
+tendril: window focused: false
+tendril: shortcut Pressed
+tendril: window focused: true
+tendril: shortcut Released
+tendril: window focused: false
+tendril: window focused: true
+tendril: window focused: false
+tendril: shortcut Pressed
+tendril: window focused: true
+tendril: shortcut Released
+tendril: window focused: false
+tendril: shortcut Pressed
+tendril: window focused: true
+tendril: shortcut Released
+tendril: window focused: false

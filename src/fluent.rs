@@ -22,7 +22,8 @@ pub fn apply(t: &Theme) -> (Color, Color) {
     let [sunken, bg, raised, line, ink, ink2, ink3] = if dark {
         [0x1c1c1c, 0x202020, 0x2d2d2d, 0x383838, 0xffffff, 0xcfcfcf, 0x9d9d9d]
     } else {
-        [0xebebeb, 0xf3f3f3, 0xfbfbfb, 0xe0e0e0, 0x1b1b1b, 0x5d5d5d, 0x8a8a8a]
+        // The faintest grey darker than Windows' own, so smaller secondary text stays readable.
+        [0xebebeb, 0xf3f3f3, 0xfbfbfb, 0xe0e0e0, 0x1b1b1b, 0x5d5d5d, 0x707070]
     };
     t.set_sunken(rgb(sunken));
     t.set_bg(rgb(bg));

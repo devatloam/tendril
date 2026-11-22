@@ -165,6 +165,7 @@ fn run(start_hidden: bool, appearance: bool, open_settings: bool) -> Result<(), 
     let app = App::install(&ui, config);
     window::watch(&ui);
     app.load_cached_apps();
+    app.warm_up();
     app.rescan(false);
     app.index_files(false);
 

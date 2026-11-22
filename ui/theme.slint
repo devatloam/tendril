@@ -27,7 +27,8 @@ export global Theme {
 
     // The selected row's wash: white, or a soft blue.
     out property <color> selection: blue-selection ? blue.mix(ink, 0.7) : ink;
-    out property <float> selection-alpha: blue-selection ? (dark ? 0.17 : 0.12) : fluent ? (dark ? 0.06 : 0.045) : (dark ? 0.085 : 0.06);
+    // Windows' greys are flatter than the palettes', so its wash is a little stronger to be seen.
+    out property <float> selection-alpha: blue-selection ? (dark ? 0.17 : 0.12) : fluent ? (dark ? 0.08 : 0.06) : (dark ? 0.085 : 0.06);
 
     // Blue leads, as on Blight's dashboard: selection, the highlighted row's icon, Tendril's mark.
     // White carries everything else; other colours only where they mean something.

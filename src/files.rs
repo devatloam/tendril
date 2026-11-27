@@ -25,6 +25,76 @@ pub const MAX_SHOWN: usize = 8;
 /// The walk runs flat out for this many, then paces itself.
 const UNPACED: usize = 20_000;
 
+/// Folders nobody looks for a file in, wherever they are: the bin, the system's own, caches.
+const SKIPPED: &[&str] = &[
+    "$recycle.bin",
+    "system volume information",
+    "$winreagent",
+    "$windows.~bt",
+    "$windows.~ws",
+    "config.msi",
+    "winsxs",
+    "system32",
+    "syswow64",
+    "lost+found",
+    "cache",
+    "caches",
+    "code cache",
+    "gpucache",
+    "dawncache",
+    "grshadercache",
+    "shadercache",
+    "cacheddata",
+    "crashpad",
+    "crashdumps",
+];
+
+/// Whole parts of the disk left out: the system's files, and the folders programs keep to
+/// themselves. Walked anyway when you list one of them (or a folder in one) yourself.
+fn system_folders() -> Vec<PathBuf> {
+    #[allow(unused_mut)]
+    let mut out = Vec::new();
+    #[cfg(windows)]
+    {
+        for var in ["SystemRoot", "ProgramData"] {
+            if let Some(p) = std::env::var_os(var) {
+                out.push(PathBuf::from(p));
+            }
+        }
+        let drive = PathBuf::from(format!("{}\\", std::env::var("SystemDrive").unwrap_or("C:".into())));
+        out.push(drive.join("Recovery"));
+        out.push(drive.join("PerfLogs"));
+        if let Some(home) = dirs::home_dir() {
+            out.push(home.join("AppData").join("Local"));
+            out.push(home.join("AppData").join("LocalLow"));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        for p in
+            ["/proc", "/sys", "/dev", "/run", "/boot", "/usr", "/lib", "/lib32", "/lib64", "/bin", "/sbin", "/etc", "/var", "/snap", "/tmp"]
+        {
+            out.push(PathBuf::from(p));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        for p in ["/System", "/Library", "/private", "/usr", "/bin", "/sbin", "/dev", "/cores"] {
+            out.push(PathBuf::from(p));
+        }
+    }
+    out
+}
+
+/// A path lowercased with / between folders, so places compare the same on every system.
+fn plain(path: &Path) -> String {
+    let mut s = path.to_string_lossy().to_lowercase().replace('\\', "/");
+    if !s.ends_with('/') {
+        s.push('/');
+    }
+    s
+}
+
 #[derive(Clone)]
 struct Entry {
     path: Box<str>,
@@ -164,6 +234,8 @@ struct Rules {
     prefixes: Vec<PathBuf>,
     regexes: Vec<Regex>,
     only: bool,
+    /// `system_folders` that aren't one you listed (or around one), in `plain` form.
+    system: Vec<String>,
 }
 
 impl Rules {
@@ -199,7 +271,22 @@ impl Rules {
             .iter()
             .filter_map(|r| Regex::new(r).map_err(|e| problems.push(format!("exclude_regex \"{r}\": {e}"))).ok())
             .collect();
-        Rules { per_root, prefixes, regexes, only: !files.include.is_empty() }
+        let roots: Vec<String> = roots.iter().map(|r| plain(r)).collect();
+        let system = system_folders().iter().map(|p| plain(p)).filter(|p| !roots.iter().any(|r| r.starts_with(p.as_str()))).collect();
+        Rules { per_root, prefixes, regexes, only: !files.include.is_empty(), system }
+    }
+
+    /// A folder of the system's or a program's own, below the folders you listed.
+    fn system(&self, path: &Path) -> bool {
+        let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if SKIPPED.contains(&name.as_str()) {
+            return true;
+        }
+        if self.system.is_empty() {
+            return false;
+        }
+        let path = plain(path);
+        self.system.iter().any(|s| path.starts_with(s.as_str()))
     }
 
     fn root(&self, path: &Path) -> Option<&(PathBuf, Gitignore, Gitignore)> {
@@ -256,7 +343,10 @@ fn walk(files: &Files, progress: Option<fn()>) -> (Index, bool, Vec<String>) {
         .require_git(false)
         .follow_links(false)
         .max_depth(Some(files.max_depth.max(1)))
-        .filter_entry(move |e| !r.left_out(e.path(), e.file_type().is_some_and(|t| t.is_dir())));
+        .filter_entry(move |e| {
+            let dir = e.file_type().is_some_and(|t| t.is_dir());
+            !(r.left_out(e.path(), dir) || (dir && e.depth() > 0 && r.system(e.path())))
+        });
     let mut entries = Vec::new();
     let mut full = false;
     let mut told = Instant::now();
@@ -420,7 +510,7 @@ impl Index {
         let least = 12 * letters as u32;
         let mut buf = Vec::new();
         // The best few so far, best first: (score, path length, entry).
-        let mut best: Vec<(u32, usize, &Entry)> = Vec::with_capacity(limit + 1);
+        let mut best: Vec<(i64, usize, &Entry)> = Vec::with_capacity(limit + 1);
         let mut total = 0;
         for (i, e) in self.entries.iter().enumerate() {
             if i % 4096 == 0 && stale() {
@@ -440,8 +530,8 @@ impl Index {
             };
             // A file you opened lately (Recent Files) is likely the one you're after again.
             let opened = if recent.iter().any(|r| *r == *e.path) { 150 } else { 0 };
-            let candidate = (score + bonus + opened, e.path.len(), e);
-            let better = |a: &(u32, usize, &Entry), b: &(u32, usize, &Entry)| a.0 > b.0 || (a.0 == b.0 && a.1 < b.1);
+            let candidate = (score as i64 + bonus + opened + likely(e, &name, name == query), e.path.len(), e);
+            let better = |a: &(i64, usize, &Entry), b: &(i64, usize, &Entry)| a.0 > b.0 || (a.0 == b.0 && a.1 < b.1);
             if best.len() == limit && !better(&candidate, &best[limit - 1]) {
                 continue;
             }
@@ -452,6 +542,62 @@ impl Index {
         let items = best.into_iter().map(|(_, _, e)| crate::paths::item(e.dir, e.name().to_string(), PathBuf::from(&*e.path))).collect();
         Some((items, total))
     }
+}
+
+/// Files you'd run: ranked up.
+const PROGRAMS: &[&str] = &["exe", "lnk", "appimage", "app"];
+/// Files the system and programs keep for themselves: ranked down, unless the whole name,
+/// extension and all, is what's typed.
+const PLUMBING: &[&str] = &[
+    "dll",
+    "sys",
+    "mui",
+    "cat",
+    "mum",
+    "manifest",
+    "pdb",
+    "lib",
+    "obj",
+    "o",
+    "a",
+    "so",
+    "dylib",
+    "pyc",
+    "pyo",
+    "tmp",
+    "etl",
+    "dat",
+    "ldb",
+    "blf",
+    "regtrans-ms",
+    "log",
+    "lock",
+    "cab",
+    "msp",
+    "pf",
+    "ini",
+    "db-wal",
+    "db-shm",
+];
+/// Places programs keep to themselves; what's in them is ranked down.
+const BACKSTAGE: &[&str] =
+    &["/appdata/", "/programdata/", "/program files/", "/program files (x86)/", "/library/", "/site-packages/", "/.cargo/", "/.rustup/"];
+
+/// How much more or less likely a match is the one you're after, from its kind and where it is.
+fn likely(e: &Entry, name: &str, exact: bool) -> i64 {
+    let ext = name.rsplit_once('.').map_or("", |(_, ext)| ext);
+    let path = plain(Path::new(&*e.path));
+    let mut points = 0;
+    if PROGRAMS.contains(&ext) {
+        points += 120;
+    }
+    if BACKSTAGE.iter().any(|b| path.contains(b)) {
+        points -= 150;
+    }
+    if !e.dir && PLUMBING.contains(&ext) && !exact {
+        points -= 250;
+    }
+    points
 }
 
 /// Which search is the newest: a search sees it's been typed past when this moves on.
@@ -595,6 +741,32 @@ mod tests {
         let (items, total) = index.find("report", MAX_SHOWN, &[draft], &mut matcher, || false).unwrap();
         assert_eq!(items[0].title, "report-draft.docx");
         assert_eq!(total, 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn programs_first_plumbing_last() {
+        let dir = std::env::temp_dir().join(format!("tendril-files-likely-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for d in ["games/totk", "app/Cache", "app/AppData/Roaming/totk"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        for f in [
+            "games/totk/totk_x.dll",
+            "games/totk/totk_x.exe",
+            "games/totk/totk_x.txt",
+            "app/Cache/totk_x.bin",
+            "app/AppData/Roaming/totk/totk_x.json",
+        ] {
+            std::fs::write(dir.join(f), "").unwrap();
+        }
+        let files = Files { folders: vec![dir.to_string_lossy().into_owned()], ..Files::default() };
+        let (index, _, _) = walk(&files, None);
+        assert!(!index.entries.iter().any(|e| e.name() == "totk_x.bin"), "caches are left out");
+        let found = search(&index, "totk_x");
+        assert_eq!(found.first().map(String::as_str), Some("totk_x.exe"));
+        assert_eq!(found.last().map(String::as_str), Some("totk_x.dll"), "{found:?}");
+        assert_eq!(search(&index, "totk_x.dll").first().map(String::as_str), Some("totk_x.dll"), "unless asked for by name");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

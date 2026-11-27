@@ -85,8 +85,13 @@ pub fn item(is_dir: bool, name: String, path: PathBuf) -> Item {
 /// The system's own icon for a file or folder where Tendril can get it: Windows draws any
 /// path's, Linux's icon theme has them by kind. Elsewhere, a plain glyph.
 #[cfg(windows)]
-fn icon(path: &Path, _is_dir: bool) -> Icon {
-    Icon::Shell(path.to_string_lossy().into_owned())
+fn icon(path: &Path, is_dir: bool) -> Icon {
+    let mut name = path.to_string_lossy().into_owned();
+    // Marks it a folder, so every folder shares one icon (icons::shared).
+    if is_dir && !name.ends_with(['\\', '/']) {
+        name.push('\\');
+    }
+    Icon::Shell(name)
 }
 
 #[cfg(target_os = "linux")]

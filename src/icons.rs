@@ -146,7 +146,7 @@ impl Icons {
         let px = self.pixels(points);
         match icon {
             Icon::File(path) if !is_vector(path) => Some(format!("{}@{px}", path.display())),
-            Icon::Shell(name) => Some(format!("{name}@{px}")),
+            Icon::Shell(name) => Some(format!("{}@{px}", shared(name).unwrap_or(name))),
             _ => None,
         }
     }
@@ -249,6 +249,24 @@ impl Icons {
     }
 }
 
+/// Files whose shell icon is their own, not their type's.
+const OWN_ICON: &[&str] = &["exe", "lnk", "url", "ico", "cur", "ani", "scr", "cpl", "msc", "appref-ms"];
+
+/// What a shell icon looks the same as: every file of a type has the same one, and so does
+/// every folder (named with a separator at the end, as file rows do), so one load does for all.
+fn shared(name: &str) -> Option<&str> {
+    let path = Path::new(name);
+    if name.ends_with(['\\', '/']) {
+        return path.parent().is_some().then_some("folder");
+    }
+    let ext = path.extension()?.to_str()?;
+    if name.starts_with("shell:") || OWN_ICON.iter().any(|o| o.eq_ignore_ascii_case(ext)) {
+        return None;
+    }
+    // The dot keeps it apart from a file that's named just that.
+    Some(&name[name.len() - ext.len() - 1..])
+}
+
 fn is_vector(path: &Path) -> bool {
     path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg") || e.eq_ignore_ascii_case("svgz"))
 }
@@ -257,9 +275,12 @@ fn is_vector(path: &Path) -> bool {
 /// on them (a row that wants one asks again, to the front), so seldom: each hand-back wakes the
 /// window's thread, closed or not.
 const AHEAD_BATCH: Duration = Duration::from_secs(1);
+/// The longest a row's icon is held once loaded, so typing fast never keeps them all back.
+const ROWS_BATCH: Duration = Duration::from_millis(50);
 
-/// The icon thread: loads what rows are waiting on first, then icons made ahead. What rows are
-/// waiting on is handed back as soon as it's all loaded, so a screenful arrives as one redraw
+/// The icon thread: loads what rows are waiting on first, newest first so the rows on screen
+/// don't wait behind ones typed past, then icons made ahead. What rows are waiting on is handed
+/// back once it's all loaded or every `ROWS_BATCH`, so a screenful arrives as a redraw or two
 /// rather than thirty; icons made ahead every so often.
 fn start_worker() -> Option<mpsc::Sender<Request>> {
     let (tx, rx) = mpsc::channel::<Request>();
@@ -278,10 +299,11 @@ fn start_worker() -> Option<mpsc::Sender<Request>> {
                     for r in rx.try_iter() {
                         queue(r, &mut now, &mut ahead);
                     }
-                    let Some(r) = now.pop_front().or_else(|| ahead.pop_front()) else { break };
+                    let Some(r) = now.pop_back().or_else(|| ahead.pop_front()) else { break };
                     waited_on |= !r.ahead;
                     batch.push(Pixels { key: r.key, rgba: load_pixels(&r.icon, r.px, r.exact) });
-                    if now.is_empty() && (waited_on || started.elapsed() > AHEAD_BATCH) {
+                    let elapsed = started.elapsed();
+                    if (waited_on && (now.is_empty() || elapsed >= ROWS_BATCH)) || (now.is_empty() && elapsed > AHEAD_BATCH) {
                         break;
                     }
                 }
@@ -376,9 +398,9 @@ pub fn shrink(w: u32, h: u32, rgba: Vec<u8>, px: u32) -> Option<(u32, u32, Vec<u
     let (w, h, mut rgba) = fit(w, h, rgba, false, px, false)?;
     for p in rgba.as_chunks_mut::<4>().0 {
         let a = u16::from(p[3]);
-        if a > 0 {
-            for c in &mut p[..3] {
-                *c = ((u16::from(*c) * 255 + a / 2) / a).min(255) as u8;
+        for c in &mut p[..3] {
+            if let Some(v) = (u16::from(*c) * 255 + a / 2).checked_div(a) {
+                *c = v.min(255) as u8;
             }
         }
     }
@@ -428,5 +450,14 @@ mod tests {
         for p in kept.as_chunks::<4>().0.iter().filter(|p| p[3] > 32) {
             assert!(p[..3].iter().all(|&c| c < 16), "{p:?}: white bled into the kept file");
         }
+    }
+
+    #[test]
+    fn types_share_an_icon() {
+        assert_eq!(shared(r"C:\Docs\report.pdf"), Some(".pdf"));
+        assert_eq!(shared(r"C:\Docs\Games\"), Some("folder"));
+        assert_eq!(shared(r"C:\Games\totk.exe"), None, "programs have their own");
+        assert_eq!(shared(r"C:\Docs\Makefile"), None);
+        assert_eq!(shared(r"shell:AppsFolder\com.squirrel.Discord.Discord"), None);
     }
 }

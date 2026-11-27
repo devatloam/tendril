@@ -398,9 +398,9 @@ pub fn shrink(w: u32, h: u32, rgba: Vec<u8>, px: u32) -> Option<(u32, u32, Vec<u
     let (w, h, mut rgba) = fit(w, h, rgba, false, px, false)?;
     for p in rgba.as_chunks_mut::<4>().0 {
         let a = u16::from(p[3]);
-        if a > 0 {
-            for c in &mut p[..3] {
-                *c = ((u16::from(*c) * 255 + a / 2) / a).min(255) as u8;
+        for c in &mut p[..3] {
+            if let Some(v) = (u16::from(*c) * 255 + a / 2).checked_div(a) {
+                *c = v.min(255) as u8;
             }
         }
     }
